@@ -256,6 +256,52 @@ async fn connection_test_reports_versioning_and_errors() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deletes_connections_and_unused_credentials() {
+    let endpoint = require_moto!();
+    let env = setup(&endpoint, false).await;
+    let connections = env.core.connections();
+    let credential_id = connections.list().unwrap()[0].credential_id.clone();
+    let second = connections
+        .create(ConnectionInput {
+            bucket: env.bucket.clone(),
+            region: REGION.into(),
+            credential: CredentialInput::Existing {
+                credential_id: credential_id.clone(),
+            },
+            role_arn: None,
+            external_id: None,
+        })
+        .await
+        .unwrap();
+    connections
+        .set_last_location(Location {
+            connection_id: env.conn.clone(),
+            prefix: "a/".into(),
+        })
+        .unwrap();
+
+    connections.delete(&env.conn).await.unwrap();
+    let ids: Vec<_> = connections
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids, vec![second.id.clone()]);
+    assert!(connections.last_location().unwrap().is_none());
+    // 残りの接続が使っている認証情報は消さない
+    assert_eq!(connections.credential_list().unwrap().len(), 1);
+
+    connections.delete(&second.id).await.unwrap();
+    assert!(connections.list().unwrap().is_empty());
+    assert!(connections.credential_list().unwrap().is_empty());
+    assert_eq!(
+        connections.delete(&second.id).await.unwrap_err().code,
+        ErrorCode::NotFound
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lists_folders_pages_and_special_keys() {
     let endpoint = require_moto!();
     let env = setup(&endpoint, false).await;
