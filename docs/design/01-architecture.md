@@ -158,8 +158,7 @@ s3driveapp/
 ├── rust-toolchain.toml       # §8.1
 ├── package.json, pnpm-workspace.yaml, pnpm-lock.yaml   # §8.1〜8.2
 ├── tsconfig.json, tsconfig.app.json, tsconfig.node.json # §8.3
-├── biome.json, vite.config.ts, components.json, renovate.json
-└── requirements.txt
+└── biome.json, vite.config.ts, components.json, renovate.json
 ```
 
 ## 5. フロントエンド設計
