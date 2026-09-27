@@ -1,0 +1,23 @@
+/* Typography — Apple system font stack; Japanese falls back to Hiragino */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Helvetica Neue", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Hiragino Sans", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  /* macOS HIG scale (pt == px @1x) */
+  --text-2xs: 10px;   /* caption */
+  --text-xs: 11px;    /* subheadline, section headings, badges */
+  --text-sm: 12px;    /* callout, secondary labels */
+  --text-base: 13px;  /* body — default for all controls */
+  --text-md: 15px;    /* title3, dialog titles */
+  --text-lg: 17px;    /* title2 */
+  --text-xl: 22px;    /* title1 */
+  --text-2xl: 26px;   /* large title, big numbers */
+  --leading-tight: 1.2;
+  --leading-normal: 1.4;
+  --leading-relaxed: 1.55;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --tracking-tight: -0.01em;
+}

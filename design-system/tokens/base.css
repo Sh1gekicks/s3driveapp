@@ -1,0 +1,31 @@
+/* Native-feel base rules for the Tauri webview */
+html, body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--foreground);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+}
+button, [role="button"], a, label, summary { cursor: default; }
+input, textarea, [contenteditable="true"], .selectable, .s3-selectable {
+  -webkit-user-select: text; user-select: text; cursor: text;
+}
+input[type="checkbox"], input[type="radio"], input[type="range"], select { cursor: default; }
+img, svg { -webkit-user-drag: none; }
+::selection { background: color-mix(in oklch, var(--primary) 30%, transparent); }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus { outline: none; }
+.s3-mono { font-family: var(--font-mono); font-size: 12px; }
+.s3-num { font-variant-numeric: tabular-nums; }
+* { box-sizing: border-box; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: color-mix(in oklch, var(--foreground) 22%, transparent); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
