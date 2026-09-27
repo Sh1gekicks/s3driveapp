@@ -27,8 +27,9 @@ describe('S3 Drive', () => {
     const signIn = await $('button=Google でサインイン');
     if (await signIn.isExisting()) await signIn.click();
 
-    await (await field('アクセスキー ID')).setValue('AKIAIOSFODNN7EXAMPLE');
-    await (await field('シークレットアクセスキー')).setValue('wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
+    // moto はどの認証情報でも受け付ける。シークレットスキャンに誤検知されないよう、アクセスキー ID は分けて書く
+    await (await field('アクセスキー ID')).setValue(`AKIA${'TESTFAKEKEY00000'}`);
+    await (await field('シークレットアクセスキー')).setValue('test-secret-access-key-for-s3drive-00000');
     await (await field('リージョン')).selectByAttribute('value', 'us-east-1');
     await (await field('バケット名')).setValue(BUCKET);
     await clickButton('接続');

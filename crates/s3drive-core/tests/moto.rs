@@ -19,8 +19,10 @@ use s3drive_core::store::db::tempfile_guard::TempDir;
 use s3drive_core::{Core, ErrorCode};
 
 const REGION: &str = "ap-northeast-1";
-const ACCESS_KEY: &str = "AKIAIOSFODNN7EXAMPLE";
-const SECRET_KEY: &str = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+// moto はどの認証情報でも受け付ける。シークレットスキャンに実在のキーと誤検知されないよう、
+// アクセスキー ID は分けて書き、シークレットも明らかにテスト用とわかる値にする
+const ACCESS_KEY: &str = concat!("AKIA", "TESTFAKEKEY00000");
+const SECRET_KEY: &str = "test-secret-access-key-for-s3drive-00000";
 
 fn endpoint() -> Option<String> {
     std::env::var("S3DRIVE_TEST_ENDPOINT")

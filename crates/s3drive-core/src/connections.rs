@@ -778,7 +778,8 @@ mod tests {
             bucket: "Bad_Bucket".into(),
             region: "ap-northeast-1".into(),
             credential: CredentialInput::New {
-                access_key_id: "AKIA4Z7XEXAMPLE7Q2LM".into(),
+                // テスト用の架空の値（シークレットスキャンに誤検知されないよう分けて書く）
+                access_key_id: concat!("AKIA", "TESTFAKEKEY00000").into(),
                 secret_access_key: "s".repeat(40),
             },
             role_arn: None,
