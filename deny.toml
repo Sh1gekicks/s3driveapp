@@ -3,6 +3,13 @@
 
 [graph]
 # リリースするのは macOS のみ。Windows／Linux 専用の依存は検査の対象外にする
+#
+# 対象外にしている既知の勧告（Cargo.lock には含まれるため、GitHub の Dependabot では通知される）:
+# - RUSTSEC-2024-0429／GHSA-wrw7-89jp-8q8g（glib 0.18 の VariantStrIter の不健全性）
+#   glib 0.18 は Tauri の Linux 向けの GTK／WebKitGTK が使うもので、macOS のビルドには含まれない。
+#   該当する VariantStrIter（array_iter_str）を呼ぶ依存も、このアプリのコードもない。
+#   修正版（glib 0.20 以降）へは、Tauri・wry・webkit2gtk が gtk 0.18 を使い続けている間は更新できない
+#   （2026-09 時点の最新: tauri 2.12.0、wry 0.57.0、webkit2gtk 2.0.2）
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 all-features = true
 
