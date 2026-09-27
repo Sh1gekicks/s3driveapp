@@ -1,0 +1,243 @@
+@import "tailwindcss";
+@import "./tokens/colors.css"; /* DS: tokens/colors.css（ライト／ダーク） */
+@import "./tokens/layout.css"; /* DS: tokens/spacing.css のうちサイズ・モーション・マテリアル */
+
+/* dark: バリアントを OS 設定（自動）と明示指定の両方に追従させる（02 §4） */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+  &:where([data-theme="dark"] *) {
+    @slot;
+  }
+}
+
+@theme {
+  /* DS: tokens/typography.css */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+    "Helvetica Neue", sans-serif;
+  --font-display:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "Hiragino Sans", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 22px;
+  --text-2xl: 26px;
+
+  /* DS: tokens/spacing.css（4px グリッド）。html の font-size が 13px のため rem ではなく px で上書きする */
+  --spacing: 4px;
+  --radius-xs: 4px;
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 12px;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:root {
+  --radius: 6px; /* shadcn/ui の基準角丸（DS: 「--radius は 6px を基準に」） */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-field: var(--field-bg);
+  --color-seg-active: var(--seg-active);
+  --color-switch-off: var(--switch-off);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-strong: var(--sidebar-accent-strong);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-row-hover: var(--row-hover);
+  --color-row-stripe: var(--row-stripe);
+  --color-row-selected: var(--row-selected);
+  --color-row-selected-foreground: var(--row-selected-foreground);
+  --color-row-selected-inactive: var(--row-selected-inactive);
+  --color-overlay: var(--overlay);
+  --color-tooltip: var(--tooltip-bg);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+  --color-azure-500: var(--azure-500);
+  --color-gray-400: var(--gray-400);
+  --color-sc-standard: var(--sc-standard);
+  --color-sc-intelligent-tiering: var(--sc-intelligent-tiering);
+  --color-sc-standard-ia: var(--sc-standard-ia);
+  --color-sc-onezone-ia: var(--sc-onezone-ia);
+  --color-sc-glacier-ir: var(--sc-glacier-ir);
+  --color-sc-glacier: var(--sc-glacier);
+  --color-sc-deep-archive: var(--sc-deep-archive);
+  --color-ft-folder: var(--ft-folder);
+  --color-ft-image: var(--ft-image);
+  --color-ft-video: var(--ft-video);
+  --color-ft-audio: var(--ft-audio);
+  --color-ft-pdf: var(--ft-pdf);
+  --color-ft-sheet: var(--ft-sheet);
+  --color-ft-archive: var(--ft-archive);
+  --color-ft-code: var(--ft-code);
+  --color-ft-doc: var(--ft-doc);
+}
+
+/* 影はライト／ダークで値が変わるため、変数を直接参照するユーティリティにする */
+@utility elevation-xs {
+  box-shadow: var(--shadow-xs);
+}
+@utility elevation-sm {
+  box-shadow: var(--shadow-sm);
+}
+@utility elevation-md {
+  box-shadow: var(--shadow-md);
+}
+@utility elevation-lg {
+  box-shadow: var(--shadow-lg);
+}
+@utility material {
+  background: var(--popover);
+  -webkit-backdrop-filter: var(--material-blur);
+  backdrop-filter: var(--material-blur);
+}
+@utility selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+@utility hairline-b {
+  border-bottom: var(--hairline) solid var(--border);
+}
+@utility hairline-t {
+  border-top: var(--hairline) solid var(--border);
+}
+@utility hairline-l {
+  border-left: var(--hairline) solid var(--border);
+}
+@utility hairline-r {
+  border-right: var(--hairline) solid var(--border);
+}
+@utility focus-ring {
+  outline: none;
+  &:focus-visible {
+    box-shadow: 0 0 0 3px var(--ring-soft);
+  }
+}
+
+@layer base {
+  /* DS: tokens/base.css（macOS ネイティブ化。02 §7） */
+  html,
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.4;
+    color: var(--foreground);
+    background: var(--background);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    cursor: default;
+    -webkit-user-select: none;
+    user-select: none;
+    overscroll-behavior: none;
+    height: 100%;
+    overflow: hidden;
+  }
+  /* ネイティブの vibrancy を透かすため、Tauri のウィンドウでは背景を透明にする（02 §7.5） */
+  html[data-platform="tauri"],
+  html[data-platform="tauri"] body {
+    background: transparent;
+  }
+  #root {
+    height: 100%;
+  }
+  button,
+  [role="button"],
+  a,
+  label,
+  summary {
+    cursor: default;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  .selectable,
+  .s3-selectable {
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: text;
+  }
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"],
+  select {
+    cursor: default;
+  }
+  img,
+  svg {
+    -webkit-user-drag: none;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 30%, transparent);
+  }
+  a {
+    color: var(--primary);
+    text-decoration: none;
+  }
+  :focus {
+    outline: none;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--foreground) 22%, transparent);
+    border-radius: 10px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .tabular-nums,
+  .s3-num {
+    font-variant-numeric: tabular-nums;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      /* biome-ignore lint/complexity/noImportantStyles: 視差効果を減らす設定はすべてのアニメーションより優先する */
+      transition-duration: 0ms !important;
+      /* biome-ignore lint/complexity/noImportantStyles: 同上 */
+      animation-duration: 0ms !important;
+    }
+  }
+}

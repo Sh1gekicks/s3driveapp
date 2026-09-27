@@ -24,6 +24,8 @@ export default defineConfig({
   build: {
     // 対応 OS の下限（macOS 13）の WKWebView に合わせる（01 §8.4）
     target: 'safari16',
+    // ローカルから読み込むデスクトップアプリのため、分割の目安を緩める
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),

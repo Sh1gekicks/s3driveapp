@@ -1,0 +1,189 @@
+/* S3 Drive — color tokens. Base palettes + shadcn/ui-compatible semantic aliases.
+   Light is default; dark follows prefers-color-scheme, or force with [data-theme="dark"] / .dark */
+:root {
+  --gray-50: oklch(0.985 0.002 250);
+  --gray-100: oklch(0.965 0.003 250);
+  --gray-200: oklch(0.925 0.005 250);
+  --gray-300: oklch(0.87 0.007 250);
+  --gray-400: oklch(0.71 0.01 250);
+  --gray-500: oklch(0.54 0.012 250);
+  --gray-600: oklch(0.446 0.012 250);
+  --gray-700: oklch(0.372 0.012 250);
+  --gray-800: oklch(0.269 0.01 250);
+  --gray-900: oklch(0.205 0.01 250);
+  --gray-950: oklch(0.145 0.008 250);
+  --azure-50: oklch(0.97 0.02 240);
+  --azure-100: oklch(0.93 0.045 240);
+  --azure-200: oklch(0.87 0.08 240);
+  --azure-300: oklch(0.79 0.11 240);
+  --azure-400: oklch(0.7 0.14 240);
+  --azure-500: oklch(0.6 0.16 240);
+  --azure-600: oklch(0.53 0.16 240);
+  --azure-700: oklch(0.46 0.14 240);
+  --azure-800: oklch(0.38 0.11 240);
+  --azure-900: oklch(0.3 0.08 240);
+  /* S3 storage classes — shared L/C, hue varies */
+  --sc-standard: oklch(0.64 0.14 240);
+  --sc-intelligent-tiering: oklch(0.64 0.14 195);
+  --sc-standard-ia: oklch(0.64 0.14 155);
+  --sc-onezone-ia: oklch(0.64 0.14 115);
+  --sc-glacier-ir: oklch(0.64 0.14 285);
+  --sc-glacier: oklch(0.64 0.14 310);
+  --sc-deep-archive: oklch(0.64 0.14 340);
+  /* File types */
+  --ft-folder: oklch(0.66 0.14 240);
+  --ft-image: oklch(0.66 0.14 340);
+  --ft-video: oklch(0.66 0.14 290);
+  --ft-audio: oklch(0.66 0.14 20);
+  --ft-pdf: oklch(0.62 0.17 27);
+  --ft-sheet: oklch(0.66 0.14 155);
+  --ft-archive: oklch(0.7 0.13 75);
+  --ft-code: oklch(0.66 0.14 195);
+  --ft-doc: oklch(0.6 0.02 250);
+  --ring-soft: color-mix(in oklch, var(--ring) 40%, transparent);
+}
+:root,
+[data-theme="light"] {
+  --background: oklch(0.995 0.001 250);
+  --foreground: var(--gray-900);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--gray-900);
+  --popover: oklch(0.99 0.002 250 / 0.9);
+  --popover-foreground: var(--gray-900);
+  --primary: var(--azure-600);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: var(--gray-100);
+  --secondary-foreground: var(--gray-900);
+  --muted: var(--gray-100);
+  --muted-foreground: var(--gray-500);
+  --accent: oklch(0 0 0 / 0.05);
+  --accent-foreground: var(--gray-900);
+  --destructive: oklch(0.577 0.215 27);
+  --success: oklch(0.6 0.14 155);
+  --warning: oklch(0.72 0.15 70);
+  --info: var(--azure-500);
+  --border: var(--gray-200);
+  --input: var(--gray-300);
+  --ring: var(--azure-500);
+  --field-bg: oklch(1 0 0);
+  --switch-off: var(--gray-300);
+  --seg-active: oklch(1 0 0);
+  --sidebar: oklch(0.955 0.004 250 / 0.78);
+  --sidebar-foreground: var(--gray-800);
+  --sidebar-accent: oklch(0 0 0 / 0.05);
+  --sidebar-accent-strong: oklch(0 0 0 / 0.09);
+  --sidebar-border: oklch(0 0 0 / 0.09);
+  --row-hover: oklch(0 0 0 / 0.035);
+  --row-stripe: oklch(0 0 0 / 0.018);
+  --row-selected: var(--azure-600);
+  --row-selected-foreground: oklch(1 0 0);
+  --row-selected-inactive: oklch(0 0 0 / 0.08);
+  --overlay: oklch(0.2 0.01 250 / 0.22);
+  --window-border: oklch(0 0 0 / 0.18);
+  --tooltip-bg: var(--gray-900);
+  --tooltip-foreground: var(--gray-50);
+  --shadow-xs: 0 1px 1px oklch(0 0 0 / 0.05);
+  --shadow-sm: 0 0 0 0.5px oklch(0 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.08);
+  --shadow-md: 0 0 0 0.5px oklch(0 0 0 / 0.12), 0 8px 24px oklch(0 0 0 / 0.14);
+  --shadow-lg: 0 0 0 0.5px oklch(0 0 0 / 0.16), 0 24px 64px oklch(0 0 0 / 0.24);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: oklch(0.2 0.006 250);
+    --foreground: oklch(0.96 0.003 250);
+    --card: oklch(0.235 0.007 250);
+    --card-foreground: oklch(0.96 0.003 250);
+    --popover: oklch(0.26 0.008 250 / 0.88);
+    --popover-foreground: oklch(0.96 0.003 250);
+    --primary: oklch(0.56 0.16 240);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.29 0.008 250);
+    --secondary-foreground: oklch(0.96 0.003 250);
+    --muted: oklch(0.27 0.008 250);
+    --muted-foreground: oklch(0.72 0.01 250);
+    --accent: oklch(1 0 0 / 0.07);
+    --accent-foreground: oklch(0.96 0.003 250);
+    --destructive: oklch(0.66 0.19 25);
+    --success: oklch(0.72 0.14 155);
+    --warning: oklch(0.8 0.14 75);
+    --info: var(--azure-400);
+    --border: oklch(1 0 0 / 0.1);
+    --input: oklch(1 0 0 / 0.14);
+    --ring: var(--azure-400);
+    --field-bg: oklch(1 0 0 / 0.05);
+    --switch-off: oklch(1 0 0 / 0.18);
+    --seg-active: oklch(1 0 0 / 0.16);
+    --sidebar: oklch(0.23 0.007 250 / 0.72);
+    --sidebar-foreground: oklch(0.9 0.005 250);
+    --sidebar-accent: oklch(1 0 0 / 0.06);
+    --sidebar-accent-strong: oklch(1 0 0 / 0.11);
+    --sidebar-border: oklch(0 0 0 / 0.5);
+    --row-hover: oklch(1 0 0 / 0.04);
+    --row-stripe: oklch(1 0 0 / 0.025);
+    --row-selected: oklch(0.52 0.15 240);
+    --row-selected-foreground: oklch(1 0 0);
+    --row-selected-inactive: oklch(1 0 0 / 0.1);
+    --overlay: oklch(0 0 0 / 0.45);
+    --window-border: oklch(0 0 0 / 0.7);
+    --tooltip-bg: oklch(0.32 0.008 250);
+    --tooltip-foreground: oklch(0.96 0.003 250);
+    --shadow-xs: 0 1px 1px oklch(0 0 0 / 0.2);
+    --shadow-sm:
+      0 0 0 0.5px oklch(0 0 0 / 0.5), 0 1px 3px oklch(0 0 0 / 0.3), inset 0 0.5px 0 oklch(1 0 0 / 0.06);
+    --shadow-md:
+      0 0 0 0.5px oklch(0 0 0 / 0.6), 0 10px 28px oklch(0 0 0 / 0.45), inset 0 0.5px 0 oklch(1 0 0 / 0.1);
+    --shadow-lg:
+      0 0 0 0.5px oklch(0 0 0 / 0.7), 0 24px 70px oklch(0 0 0 / 0.55), inset 0 0.5px 0 oklch(1 0 0 / 0.12);
+    color-scheme: dark;
+  }
+}
+[data-theme="dark"],
+.dark {
+  --background: oklch(0.2 0.006 250);
+  --foreground: oklch(0.96 0.003 250);
+  --card: oklch(0.235 0.007 250);
+  --card-foreground: oklch(0.96 0.003 250);
+  --popover: oklch(0.26 0.008 250 / 0.88);
+  --popover-foreground: oklch(0.96 0.003 250);
+  --primary: oklch(0.56 0.16 240);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.29 0.008 250);
+  --secondary-foreground: oklch(0.96 0.003 250);
+  --muted: oklch(0.27 0.008 250);
+  --muted-foreground: oklch(0.72 0.01 250);
+  --accent: oklch(1 0 0 / 0.07);
+  --accent-foreground: oklch(0.96 0.003 250);
+  --destructive: oklch(0.66 0.19 25);
+  --success: oklch(0.72 0.14 155);
+  --warning: oklch(0.8 0.14 75);
+  --info: var(--azure-400);
+  --border: oklch(1 0 0 / 0.1);
+  --input: oklch(1 0 0 / 0.14);
+  --ring: var(--azure-400);
+  --field-bg: oklch(1 0 0 / 0.05);
+  --switch-off: oklch(1 0 0 / 0.18);
+  --seg-active: oklch(1 0 0 / 0.16);
+  --sidebar: oklch(0.23 0.007 250 / 0.72);
+  --sidebar-foreground: oklch(0.9 0.005 250);
+  --sidebar-accent: oklch(1 0 0 / 0.06);
+  --sidebar-accent-strong: oklch(1 0 0 / 0.11);
+  --sidebar-border: oklch(0 0 0 / 0.5);
+  --row-hover: oklch(1 0 0 / 0.04);
+  --row-stripe: oklch(1 0 0 / 0.025);
+  --row-selected: oklch(0.52 0.15 240);
+  --row-selected-foreground: oklch(1 0 0);
+  --row-selected-inactive: oklch(1 0 0 / 0.1);
+  --overlay: oklch(0 0 0 / 0.45);
+  --window-border: oklch(0 0 0 / 0.7);
+  --tooltip-bg: oklch(0.32 0.008 250);
+  --tooltip-foreground: oklch(0.96 0.003 250);
+  --shadow-xs: 0 1px 1px oklch(0 0 0 / 0.2);
+  --shadow-sm:
+    0 0 0 0.5px oklch(0 0 0 / 0.5), 0 1px 3px oklch(0 0 0 / 0.3), inset 0 0.5px 0 oklch(1 0 0 / 0.06);
+  --shadow-md:
+    0 0 0 0.5px oklch(0 0 0 / 0.6), 0 10px 28px oklch(0 0 0 / 0.45), inset 0 0.5px 0 oklch(1 0 0 / 0.1);
+  --shadow-lg:
+    0 0 0 0.5px oklch(0 0 0 / 0.7), 0 24px 70px oklch(0 0 0 / 0.55), inset 0 0.5px 0 oklch(1 0 0 / 0.12);
+  color-scheme: dark;
+}

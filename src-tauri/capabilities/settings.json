@@ -2,9 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
   "description": "設定ウィンドウ。settings_*・connection_*・credential_*・search_index_*・app_* のみを許可する（05 §8）",
-  "windows": [
-    "settings"
-  ],
+  "windows": ["settings"],
   "permissions": [
     "core:event:default",
     "core:window:allow-show",

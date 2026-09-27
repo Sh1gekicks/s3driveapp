@@ -2,9 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
   "description": "メインウィンドウ。全コマンドとウィンドウ操作・イベント・クリップボードへの書き込みを許可する（05 §8）。dialog・opener・fs は与えない",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:event:default",
     "core:window:allow-show",

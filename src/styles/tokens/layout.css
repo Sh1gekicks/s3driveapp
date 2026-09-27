@@ -1,0 +1,16 @@
+/* DS: tokens/spacing.css のうちサイズ・モーション・マテリアル（02 §2）。余白・角丸は globals.css の @theme に移植する */
+:root {
+  --control-h-sm: 24px;
+  --control-h-md: 28px;
+  --control-h-lg: 32px;
+  --row-h: 28px;
+  --titlebar-h: 52px;
+  --sidebar-w: 220px;
+  --inspector-w: 280px;
+  --hairline: 0.5px;
+  --radius-window: 12px;
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --material-blur: saturate(180%) blur(24px);
+}

@@ -1,0 +1,152 @@
+// 表示中のダイアログ（useUiStore.dialog）を描画する。
+
+import { Download, Info } from 'lucide-react';
+import * as React from 'react';
+import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
+import { showError } from '@/features/errors';
+import { ja } from '@/lib/i18n/ja';
+import type { Connection } from '@/lib/ipc';
+import * as ipc from '@/lib/ipc';
+import { useUiStore } from '@/stores/ui';
+import {
+  AddBucketDialog,
+  CredentialsDialog,
+  DeleteConnectionDialog,
+  EditConnectionDialog,
+} from './connection-dialogs';
+import {
+  ConflictDialog,
+  DeleteDialog,
+  DeleteVersionDialog,
+  MoveDialog,
+  NewFolderDialog,
+  RenameDialog,
+  RestoreDialog,
+  StorageClassDialog,
+} from './file-dialogs';
+
+function DetailsDialog({ title, lines, onClose }: { title: string; lines: string[]; onClose: () => void }) {
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      icon={Info}
+      width={480}
+      title={title}
+      footer={
+        <Button onClick={onClose} autoFocus>
+          {ja.common.close}
+        </Button>
+      }
+    >
+      <ul className="m-0 max-h-60 list-none overflow-auto rounded-lg p-2 text-sm shadow-[inset_0_0_0_0.5px_var(--border)] selectable">
+        {lines.filter(Boolean).map((line, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: 同じ文言が並ぶことがある
+          <li key={i} className="py-0.5 break-all">
+            {line}
+          </li>
+        ))}
+      </ul>
+    </Dialog>
+  );
+}
+
+function UpdateDialog({
+  version,
+  notes,
+  onClose,
+}: {
+  version: string;
+  notes: string | null;
+  onClose: () => void;
+}) {
+  const [progress, setProgress] = React.useState<number | null | undefined>(undefined);
+  const u = ja.dialog.update;
+  const install = () => {
+    setProgress(null);
+    ipc.app
+      .installUpdate((e) => {
+        if (e.event === 'progress')
+          setProgress(e.data.total ? (e.data.downloaded / e.data.total) * 100 : null);
+      })
+      .catch((e) => {
+        setProgress(undefined);
+        showError(e, u.install);
+      });
+  };
+  const busy = progress !== undefined;
+  return (
+    <Dialog
+      open
+      onClose={busy ? () => {} : onClose}
+      icon={Download}
+      title={u.title(version)}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            {u.later}
+          </Button>
+          <Button onClick={install} disabled={busy}>
+            {busy ? u.installing : u.install}
+          </Button>
+        </>
+      }
+    >
+      {notes ? (
+        <p className="m-0 max-h-40 overflow-auto text-sm whitespace-pre-wrap text-muted-foreground">
+          {notes}
+        </p>
+      ) : null}
+      {busy ? <Progress value={progress ?? null} aria-label={u.installing} /> : null}
+    </Dialog>
+  );
+}
+
+export function DialogHost({ connection }: { connection: Connection | null }) {
+  const dialog = useUiStore((s) => s.dialog);
+  const close = React.useCallback(() => useUiStore.getState().closeDialog(), []);
+  if (!dialog) return null;
+  switch (dialog.type) {
+    case 'newFolder':
+      return <NewFolderDialog onClose={close} />;
+    case 'rename':
+      return <RenameDialog item={dialog.item} onClose={close} />;
+    case 'delete':
+      return <DeleteDialog items={dialog.items} onClose={close} />;
+    case 'move':
+      return <MoveDialog items={dialog.items} onClose={close} />;
+    case 'storageClass':
+      return <StorageClassDialog items={dialog.items} connection={connection} onClose={close} />;
+    case 'restore':
+      return <RestoreDialog items={dialog.items} onClose={close} />;
+    case 'conflict':
+      return (
+        <ConflictDialog conflicts={dialog.conflicts} versioned={dialog.versioned} resolve={dialog.resolve} />
+      );
+    case 'deleteVersion':
+      return (
+        <DeleteVersionDialog
+          versionKey={dialog.key}
+          versionId={dialog.versionId}
+          date={dialog.date}
+          size={dialog.size}
+          isLatest={dialog.isLatest}
+          onClose={close}
+        />
+      );
+    case 'addBucket':
+      return <AddBucketDialog onClose={close} />;
+    case 'editConnection':
+      return <EditConnectionDialog connectionId={dialog.connectionId} onClose={close} />;
+    case 'deleteConnection':
+      return <DeleteConnectionDialog connectionId={dialog.connectionId} onClose={close} />;
+    case 'credentials':
+      return <CredentialsDialog credentialId={dialog.credentialId} onClose={close} />;
+    case 'update':
+      return <UpdateDialog version={dialog.version} notes={dialog.notes} onClose={close} />;
+    case 'details':
+      return <DetailsDialog title={dialog.title} lines={dialog.lines} onClose={close} />;
+  }
+}
