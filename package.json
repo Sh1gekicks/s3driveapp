@@ -11,7 +11,9 @@
     "typecheck": "tsc -b",
     "lint": "biome check .",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "e2e": "wdio run e2e/wdio.conf.ts",
+    "e2e:build": "tauri build --debug --no-bundle --features e2e"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -44,10 +46,17 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "@vitest/coverage-v8": "^5.0.2",
+    "@wdio/cli": "^9.32.0",
+    "@wdio/globals": "^9.31.3",
+    "@wdio/local-runner": "^9.32.0",
+    "@wdio/mocha-framework": "^9.32.0",
+    "@wdio/spec-reporter": "^9.32.0",
+    "@wdio/tauri-service": "1.4.0",
     "jsdom": "^30.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.2",
+    "webdriverio": "^9.32.0"
   }
 }

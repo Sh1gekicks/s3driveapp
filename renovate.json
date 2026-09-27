@@ -19,6 +19,11 @@
       "groupName": "Tauri",
       "matchPackageNames": ["/^@tauri-apps\\//", "/^tauri(-.*)?$/"],
       "description": "npm パッケージと Rust クレートのマイナー版をそろえて更新する"
+    },
+    {
+      "groupName": "WebdriverIO",
+      "matchPackageNames": ["webdriverio", "/^@wdio\\//"],
+      "description": "E2E（09 §2.5）。@wdio/tauri-service は版を固定しており、E2E が通ることを確認してから取り込む"
     }
   ]
 }

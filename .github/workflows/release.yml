@@ -1,0 +1,82 @@
+# リリース（08 §4）。タグ vX.Y.Z でユニバーサルバイナリをビルドし、署名・公証して下書きのリリースを作る。
+# シークレットはすべて Environment `release` に置き、実行には承認を必須にする（08 §5）。
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          cache: true
+          require-lockfile: true
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: バージョンの確認
+        if: github.event_name == 'push'
+        run: test "v$(jq -r .version package.json)" = "${GITHUB_REF_NAME}"
+
+      # 自動更新の公開鍵はリポジトリに置かず（鍵を作るまでは空）、リリース時に設定へ重ねる
+      - name: 自動更新の設定
+        env:
+          TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          test -n "$TAURI_UPDATER_PUBKEY" || { echo "::error::変数 TAURI_UPDATER_PUBKEY が未設定です（pnpm tauri signer generate の公開鍵）"; exit 1; }
+          jq -n --arg pubkey "$TAURI_UPDATER_PUBKEY" \
+            '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pubkey}}}' \
+            > "$RUNNER_TEMP/tauri.release.conf.json"
+          echo "RELEASE_CONFIG=$RUNNER_TEMP/tauri.release.conf.json" >> "$GITHUB_ENV"
+
+      - name: App Store Connect API キーの配置
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/keys/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          S3DRIVE_GOOGLE_CLIENT_ID: ${{ secrets.S3DRIVE_GOOGLE_CLIENT_ID }}
+          S3DRIVE_GOOGLE_CLIENT_SECRET: ${{ secrets.S3DRIVE_GOOGLE_CLIENT_SECRET }}
+          S3DRIVE_ALLOWED_EMAILS: ${{ vars.S3DRIVE_ALLOWED_EMAILS }}
+          S3DRIVE_ALLOWED_DOMAINS: ${{ vars.S3DRIVE_ALLOWED_DOMAINS }}
+        with:
+          args: --target universal-apple-darwin --config ${{ env.RELEASE_CONFIG }}
+          tagName: ${{ github.ref_name }}
+          releaseName: S3 Drive ${{ github.ref_name }}
+          releaseDraft: true
+          uploadUpdaterJson: true
+
+      - name: 署名と公証の検証
+        run: |
+          APP="target/universal-apple-darwin/release/bundle/macos/S3 Drive.app" # Cargo ワークスペース直下の target
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose "$APP"
+          xcrun stapler validate "$APP"
+
+      - name: 鍵の削除
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"

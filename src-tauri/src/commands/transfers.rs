@@ -27,6 +27,20 @@ pub fn transfer_subscribe(
         .subscribe(Arc::new(ChannelSink(on_event)))
 }
 
+/// E2E ビルドのファイル選択（09 §2.5）。ダイアログを開く代わりに、環境変数に書いたパスで選択 ID を発行する。
+/// `S3DRIVE_E2E_UPLOAD_PATHS`（アップロード。パスを改行区切り）、`S3DRIVE_E2E_DOWNLOAD_DIR`（保存先）。
+#[cfg(feature = "e2e")]
+fn e2e_selection(state: &AppState, var: &str) -> Option<Option<Selection>> {
+    let value = std::env::var(var).ok()?;
+    let paths: Vec<std::path::PathBuf> = value
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(Into::into)
+        .collect();
+    Some((!paths.is_empty()).then(|| state.core.selections().register(paths)))
+}
+
 /// Rust 側でファイル（またはフォルダ）の選択ダイアログを開く。
 #[tauri::command]
 pub async fn pick_upload_files(
@@ -34,6 +48,10 @@ pub async fn pick_upload_files(
     state: State<'_, AppState>,
     directories: bool,
 ) -> CmdResult<Option<Selection>> {
+    #[cfg(feature = "e2e")]
+    if let Some(selection) = e2e_selection(&state, "S3DRIVE_E2E_UPLOAD_PATHS") {
+        return Ok(selection);
+    }
     let dialog = app.dialog().file().set_title(if directories {
         "アップロードするフォルダを選択"
     } else {
@@ -92,6 +110,10 @@ pub async fn pick_download_dir(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> CmdResult<Option<Selection>> {
+    #[cfg(feature = "e2e")]
+    if let Some(selection) = e2e_selection(&state, "S3DRIVE_E2E_DOWNLOAD_DIR") {
+        return Ok(selection);
+    }
     let dialog = app.dialog().file().set_title("保存先を選択");
     let picked = tauri::async_runtime::spawn_blocking(move || dialog.blocking_pick_folder())
         .await

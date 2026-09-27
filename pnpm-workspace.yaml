@@ -2,7 +2,12 @@
 
 # 依存パッケージのビルドスクリプト（postinstall など）は既定で実行しない。
 # 必要になったものだけ、理由をコメントして許可する（例: some-native-package: true）
-allowBuilds: {}
+allowBuilds:
+  # WebdriverIO の依存。Edge／Firefox のドライバを取得するスクリプトは不要（E2E は Tauri 内蔵の WebDriver を使う）
+  edgedriver: false
+  geckodriver: false
+  # esbuild はプラットフォーム別の optionalDependencies でバイナリを取得するため、postinstall は不要
+  esbuild: false
 
 # 公開から 1 日（1,440 分）未満のバージョンはインストールしない（pnpm 11 以降の既定値を明示）
 minimumReleaseAge: 1440

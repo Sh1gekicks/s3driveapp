@@ -17,12 +17,14 @@ tokio-util = "0.7"
 futures = "0.3"
 
 # AWS SDK for Rust（REQ-T01）
+# 既定の "rustls" 機能は旧 hyper 0.14／rustls 0.21 の接続（RustSec の勧告あり）を含めるため外し、
+# 既定の HTTPS クライアント（hyper 1／rustls 0.23）だけを使う（deny.toml）
 aws-config = { version = "1.12", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1.150"
-aws-sdk-sts = "1.118"
-aws-sdk-cloudwatch = "1.133"
-aws-sdk-costexplorer = "1.131"
-aws-sdk-pricing = "1.117"
+aws-sdk-s3 = { version = "1.150", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
+aws-sdk-sts = { version = "1.118", default-features = false, features = ["sigv4a", "default-https-client", "rt-tokio"] }
+aws-sdk-cloudwatch = { version = "1.133", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-costexplorer = { version = "1.131", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-pricing = { version = "1.117", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-credential-types = "1.3"
 aws-smithy-types = "1.8"
 aws-smithy-runtime-api = "1"
