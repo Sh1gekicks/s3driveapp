@@ -1,21 +1,56 @@
-# Security Policy
+# セキュリティポリシー
 
-## Supported Versions
+## サポートしているバージョン
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+セキュリティの修正は、最新のリリースにだけ行います。修正は新しいバージョンとしてリリースし、自動更新で配信します。
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| バージョン | サポート |
+|---|---|
+| 最新のリリース（[Releases](https://github.com/Sh1gekicks/s3driveapp/releases/latest)） | ✅ |
+| それより前のリリース | ❌ |
 
-## Reporting a Vulnerability
+自動更新を無効にしている場合は、メニューの「アップデートを確認…」から最新のバージョンに更新してください。
 
-Use this section to tell people how to report a vulnerability.
+## 脆弱性の報告
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+脆弱性を見つけた場合は、**公開の Issue や Pull Request、Discussions には書かず**、GitHub の非公開の脆弱性報告で連絡してください。
+
+1. リポジトリの [Security](https://github.com/Sh1gekicks/s3driveapp/security) タブを開きます。
+2. 「Report a vulnerability」を押し、内容を記入して送信します。
+
+報告には、分かる範囲で次を含めてください。
+
+- S3 Drive のバージョン（「S3 Drive について」に表示されます）
+- macOS のバージョンと、Mac の種類（Apple Silicon／Intel）
+- 再現の手順
+- 想定される影響（どのような情報が漏れる、どのような操作ができてしまうか）
+- 検証に使ったコードやスクリーンショット（あれば）
+
+報告に、AWS のアクセスキーや Google アカウントの認証情報など、実際の秘密情報を含めないでください。
+
+報告を確認したら、非公開の報告の中で状況をお知らせします。修正をリリースするまでは、内容を公開しないようご協力をお願いします。
+
+## 対象
+
+| 対象 | 例 |
+|---|---|
+| アプリ本体 | 認証情報（キーチェーンに保存するアクセスキー、Google のトークン）の漏えい、IPC や WebView を経由した任意のコード実行、ログへの秘密情報の出力 |
+| 配布と自動更新 | 改ざんした更新を適用させられる、署名の検証を回避できる |
+| リポジトリと CI/CD | GitHub Actions のワークフローからのシークレットの漏えい、サプライチェーンへの攻撃 |
+
+次は対象外です。
+
+- アプリが Apple の公証を受けていないこと（既知の制約です。[README](README.md#制約事項)）
+- 利用者が付与した IAM の権限の範囲で行える操作
+- AWS や Google などの外部サービス自体の脆弱性（各サービスに報告してください）
+
+## 配布物の確認
+
+配布物がこのリポジトリのワークフローでビルドされたものかは、次のどちらかで確認できます。
+
+- リリースノートに記載した SHA-256 と、`shasum -a 256 <ファイル>` の結果が一致すること
+- `gh attestation verify <ファイル> -R Sh1gekicks/s3driveapp` が成功すること
+
+## セキュリティの設計
+
+認証情報の扱い、IAM ポリシー、Tauri のセキュリティ設定、サプライチェーンと配布物の完全性の対策は、[07 セキュリティ設計](docs/design/07-security.md) にまとめています。
