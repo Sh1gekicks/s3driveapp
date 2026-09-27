@@ -1,0 +1,18 @@
+[package]
+name = "s3drive-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "s3drive_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+s3drive-core.workspace = true
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }

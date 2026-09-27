@@ -1,0 +1,11 @@
+# s3drive-core の結合テスト用 S3 モック（09 §3）
+#   docker compose -f docker-compose.test.yml up -d
+#   S3DRIVE_TEST_ENDPOINT=http://localhost:5000 cargo test -p s3drive-core
+#
+# moto 5.2 系は GetBucketVersioning の応答のルート要素が S3 と異なり（GetBucketVersioningResponse）、
+# AWS SDK for Rust が解析できないため 5.1 系に固定する。
+services:
+  moto:
+    image: motoserver/moto:5.1.22
+    ports:
+      - "5000:5000"

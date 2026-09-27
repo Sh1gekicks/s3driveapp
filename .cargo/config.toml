@@ -1,0 +1,5 @@
+[env]
+# ts-rs が生成する TypeScript の型の出力先（05 §6.1）
+TS_RS_EXPORT_DIR = { value = "src/lib/ipc/bindings", relative = true }
+# 64 ビット整数（サイズ・件数）は number として生成する（05 §2）
+TS_RS_LARGE_INT = "number"

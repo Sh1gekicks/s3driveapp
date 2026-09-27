@@ -1,0 +1,29 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "Asia/Tokyo",
+  "schedule": [
+    "before 9am on monday"
+  ],
+  "minimumReleaseAge": "1 day",
+  "packageRules": [
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "pinDigests": true
+    },
+    {
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "motoserver/moto"
+      ],
+      "allowedVersions": "<5.2",
+      "description": "moto 5.2 系は GetBucketVersioning の応答が SDK と互換でない"
+    }
+  ]
+}
