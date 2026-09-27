@@ -55,6 +55,20 @@ cargo deny check
 pnpm e2e:build && pnpm e2e
 ```
 
+E2E はバージョニングを有効にしたバケット（既定は `s3drive-e2e`。`S3DRIVE_E2E_BUCKET` で変更できる）を使います。moto を起動したら、先に作っておいてください。
+
+```sh
+curl -sf -X PUT http://localhost:5000/s3drive-e2e
+curl -sf -X PUT -H 'Content-Type: application/xml' 'http://localhost:5000/s3drive-e2e?versioning' --data-binary @e2e/fixtures/versioning.xml
+```
+
+macOS では AirPlay レシーバーが 5000 番を使っているため、そのままでは moto に接続できません（`403 Forbidden` が返ります）。システム設定の「一般 > AirDrop と Handoff」で AirPlay レシーバーをオフにするか、moto を別のポートで起動して `S3DRIVE_TEST_ENDPOINT` を合わせてください。
+
+```sh
+docker run -d --rm -p 5055:5000 motoserver/moto:5.1.22
+S3DRIVE_TEST_ENDPOINT=http://localhost:5055 pnpm e2e
+```
+
 Rust の型を変更したら `cargo test -p s3drive-core` で `src/lib/ipc/bindings` を書き出し、差分をコミットしてください（CI で差分を確認します）。
 
 ## リリース
