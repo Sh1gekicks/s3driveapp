@@ -44,7 +44,7 @@ tauri-plugin-store で読み書きし、変更は即時に保存する。接続�
     "ignore": [".DS_Store"],
     "notifyOnComplete": true
   },
-  "cost": { "useCostExplorer": true, "refreshHours": 6 },
+  "cost": { "useCostExplorer": true },
   "search": { "autoRefreshMinutes": 60 },
   "advanced": { "logLevel": "info", "autoCheckUpdate": true },
   "accounts": {
@@ -85,7 +85,7 @@ tauri-plugin-store で読み書きし、変更は即時に保存する。接続�
 | `transfer.defaultStorageClass` | アップロード時のストレージクラス（接続の `defaultStorageClass` が優先） | `STANDARD` |
 | `transfer.normalizeNfc` | キーの NFC 正規化 | `true` |
 | `transfer.ignore` | 除外するファイル名 | `[".DS_Store"]` |
-| `cost.useCostExplorer` / `refreshHours` | Cost Explorer の利用 / キャッシュ時間 | `true` / 6 |
+| `cost.useCostExplorer` | Cost Explorer の利用（取得は手動の「更新」のみ） | `true` |
 | `search.autoRefreshMinutes` | インデックスを自動更新するまでの時間（0 は手動のみ） | 60 |
 | `accounts.*.connections[].endpointUrl` | エンドポイントの上書き。テスト用で、開発ビルドでのみ有効 | `null` |
 
@@ -278,7 +278,7 @@ LIMIT :limit OFFSET :offset;
 | バケットの情報 | メモリ | 10 分 | 手動更新 |
 | 検索インデックス | SQLite | 60 分（検索開始時に背景で更新） | アプリ自身の変更は即時反映 |
 | 利用容量（CloudWatch） | SQLite | 1 時間 | ダッシュボードの「更新」 |
-| コスト（Cost Explorer） | SQLite | 6 時間（設定） | ダッシュボードの「更新」 |
+| コスト（Cost Explorer） | SQLite | なし（次の手動更新まで保持） | ダッシュボードの「更新」のみ |
 | 単価（Price List） | SQLite | 7 日 | — |
 
 ## 6. マイグレーション
