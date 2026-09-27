@@ -8,7 +8,7 @@
 | Google のトークン | 認可コードの横取り、端末からの窃取 | PKCE、state、127.0.0.1 のみで待ち受け、キーチェーンに保存 |
 | S3 上のデータ | 誤操作による削除、過剰な権限 | 確認ダイアログ、バージョニングの推奨、最小権限ポリシー、ルートユーザーのキーの拒否 |
 | ローカルファイル | 不正なスクリプトによる任意ファイルの読み取り・書き込み | 選択 ID 方式（[05 §3.9](05-backend-ipc.md#39-ローカルパスの受け渡し)）、CSP、リモートコンテンツを読み込まない、ウィンドウごとの権限 |
-| 配布物 | 改ざん、なりすまし | コード署名、公証、アップデートの署名検証 |
+| 配布物 | 改ざん、なりすまし | コード署名（アドホック）、構成証明、アップデートの署名検証 |
 
 ## 2. Google 認証（OAuth 2.0 + PKCE）
 
@@ -228,7 +228,7 @@ Cost Explorer の API の利用可否は IAM ポリシーで決まる（請求�
 
 ### 5.2 macOS の実行環境
 
-- Hardened Runtime を有効にして署名し、公証する（[08 §4](08-cicd.md#4-releaseyml)）。
+- Hardened Runtime を有効にしてアドホック署名する。Apple Developer Program に加入していないため公証はしない（[08 §4](08-cicd.md#4-releaseyml)）。
 - App Sandbox は使わない（`macOSPrivateApi` を使うことと、任意の保存先へのダウンロードのため）。
 - entitlements は必要最小限とする。
 
@@ -254,15 +254,16 @@ Cost Explorer の API の利用可否は IAM ポリシーで決まる（請求�
 | 脆弱性・ライセンスの検査 | `cargo deny check`（advisories、licenses、bans）と `pnpm audit --prod` を CI で実行する。pnpm の監査で例外にする脆弱性は GHSA ID で `auditConfig.ignoreGhsas` に理由とともに記録する |
 | 依存の更新 | Renovate（npm、cargo、github-actions）で週 1 回。Renovate の `minimumReleaseAge` も 1 日に揃える（[08 §2.1](08-cicd.md#21-依存の自動更新renovate)） |
 | GitHub Actions | サードパーティのアクションはコミット SHA で固定する（SHA の更新は Renovate）。ワークフローごとに `permissions` を最小にする |
-| 秘密情報 | 署名・公証・OAuth・アップデート署名の鍵は GitHub Environments（`release`）のシークレットに置き、レビュー承認を必須にする |
+| 秘密情報 | OAuth・アップデート署名の鍵は GitHub Environments（`release`）のシークレットに置き、レビュー承認を必須にする |
 
 ## 8. 配布物の完全性
 
 | 対策 | 内容 |
 |---|---|
-| コード署名 | Developer ID Application 証明書で署名する（Hardened Runtime） |
-| 公証 | App Store Connect API キーで notarytool により公証し、ステープルする |
-| 自動更新 | tauri-plugin-updater の署名（公開鍵を `tauri.conf.json` に埋め込み、秘密鍵は GitHub のシークレット）を検証してから適用する。更新情報は HTTPS で取得する |
+| コード署名 | アドホック署名（Hardened Runtime）。改ざんは検出できるが、署名者の身元は示さない |
+| 公証 | 行わない（Apple Developer Program に未加入）。初回起動時に Gatekeeper が止めるため、利用者が「プライバシーとセキュリティ」で許可する（[08 §6.1](08-cicd.md#61-利用者のインストール手順リリースノートに記載する)） |
+| 構成証明 | DMG と `.app.tar.gz` に GitHub の構成証明（SLSA のビルド来歴、Sigstore で署名）を付ける。`gh attestation verify` で、このリポジトリの `release.yml` がビルドしたものか確認できる |
+| 自動更新 | tauri-plugin-updater の署名（公開鍵をリリース時に `tauri.conf.json` へ埋め込み、秘密鍵は GitHub のシークレット）を検証してから適用する。更新情報は HTTPS で取得する。公証がないため、インストール後の配布物の真正性はこの署名が担う |
 | チェックサム | リリースノートに配布物の SHA-256 を記載する |
 
 ## 9. プライバシー

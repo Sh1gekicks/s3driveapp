@@ -1,4 +1,5 @@
-# リリース（08 §4）。タグ vX.Y.Z でユニバーサルバイナリをビルドし、署名・公証して下書きのリリースを作る。
+# リリース（08 §4）。タグ vX.Y.Z でユニバーサルバイナリをビルドし、アドホック署名して下書きのリリースを作る。
+# Apple Developer Program（有料）に加入していないため、Developer ID 署名と公証は行わない（README D11）。
 # シークレットはすべて Environment `release` に置き、実行には承認を必須にする（08 §5）。
 name: Release
 
@@ -9,6 +10,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write # 構成証明（Sigstore の証明書の取得）
+  attestations: write
 
 jobs:
   release:
@@ -41,22 +44,9 @@ jobs:
             > "$RUNNER_TEMP/tauri.release.conf.json"
           echo "RELEASE_CONFIG=$RUNNER_TEMP/tauri.release.conf.json" >> "$GITHUB_ENV"
 
-      - name: App Store Connect API キーの配置
-        env:
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/keys"
-          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
-          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/keys/AuthKey.p8" >> "$GITHUB_ENV"
-
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           S3DRIVE_GOOGLE_CLIENT_ID: ${{ secrets.S3DRIVE_GOOGLE_CLIENT_ID }}
@@ -70,13 +60,29 @@ jobs:
           releaseDraft: true
           uploadUpdaterJson: true
 
-      - name: 署名と公証の検証
+      # 署名は tauri.conf.json の signingIdentity "-"（アドホック署名）。Gatekeeper の評価（spctl）と
+      # ステープルは公証が前提のため検証しない
+      - name: 署名の検証
         run: |
           APP="target/universal-apple-darwin/release/bundle/macos/S3 Drive.app" # Cargo ワークスペース直下の target
           codesign --verify --deep --strict --verbose=2 "$APP"
-          spctl --assess --type execute --verbose "$APP"
-          xcrun stapler validate "$APP"
+          codesign --display --verbose=2 "$APP" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
+          grep -q 'Signature=adhoc' "$RUNNER_TEMP/codesign.txt"
+          grep -q 'flags=.*runtime' "$RUNNER_TEMP/codesign.txt"
 
-      - name: 鍵の削除
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/keys"
+      # 公証の代わりに、配布物がこのワークフローでビルドされたことを GitHub の構成証明で示す（07 §8）
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+
+      - name: チェックサムの出力
+        run: |
+          cd target/universal-apple-darwin/release/bundle
+          {
+            echo '### SHA-256（リリースノートに記載する）'
+            echo '```'
+            shasum -a 256 dmg/*.dmg macos/*.app.tar.gz | sed 's|  .*/|  |'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | 0.3（ドラフト） |
+| 版 | 0.4（ドラフト） |
 | 作成日 | 2026-09-27 |
 | 対象 | S3 Drive App（macOS ネイティブアプリ） |
 | 入力資料 | [requirements.txt](../../requirements.txt)／デザインシステム「S3 Drive デザインシステム」（[Claude Design](https://claude.ai/design/p/2d5c9b6d-736c-4a1d-8ca7-8d2787602a5e)） |
@@ -31,7 +31,7 @@ requirements.txt の要求事項と、Claude Design 上のデザインシステ�
 | [05-backend-ipc.md](05-backend-ipc.md) | Rust モジュール設計、IPC コマンド／チャネル仕様、エラーコード |
 | [06-data.md](06-data.md) | ローカルデータ設計（設定、キーチェーン、SQLite）、キャッシュ方針 |
 | [07-security.md](07-security.md) | Google 認証、AWS 認証情報の管理、IAM ポリシー、Tauri のセキュリティ設定 |
-| [08-cicd.md](08-cicd.md) | GitHub Actions（ビルド・テスト・署名／公証・リリース・自動更新） |
+| [08-cicd.md](08-cicd.md) | GitHub Actions（ビルド・テスト・署名・リリース・自動更新） |
 | [09-testing.md](09-testing.md) | テスト戦略、テスト環境、テスト観点 |
 
 デザインシステムは Claude Design のプロジェクトが正本である。本書では同プロジェクト内のファイルを `DS:` を付けて参照する（例: `DS: ui_kits/s3-drive/Dashboard.jsx`）。リポジトリの [`design-system/`](../../design-system/SNAPSHOT.md) に 2026-09-27 時点の写しを置いており、`DS:` のパスはこのフォルダからの相対パスと同じである。
@@ -113,7 +113,7 @@ requirements.txt の機能をすべて対象とする。本書では以下の要
 | AWS | バケット、IAM ユーザ（アクセスキー発行済み）、任意で AssumeRole 先のロールが作成済みであること。必要な権限は [07-security.md §4](07-security.md#4-iam-ポリシー) を参照 |
 | AWS（推奨設定） | バージョニング有効化（削除からの復元に必要）／ライフサイクルルール `AbortIncompleteMultipartUpload`（7 日）／非現行バージョンの有効期限（コスト抑制）／バケットへのコスト配分タグ（バケット単位のコスト表示に必要）／Cost Explorer の有効化 |
 | Google | GCP プロジェクトに OAuth クライアント（種類: デスクトップ アプリ）を作成済みであること。同意画面の公開ステータスが「テスト」の間はリフレッシュトークンが 7 日で失効する |
-| Apple | 署名・公証のため Apple Developer Program への加入と Developer ID Application 証明書が必要 |
+| Apple | Apple Developer Program（有料）には加入しない。署名はアドホック署名とし、公証は行わない（D11）。加入した場合の切り替え手順は [08 §4.3](08-cicd.md#43-developer-id-署名と公証に切り替える場合) |
 | 対応 OS | macOS 13 Ventura 以降、Apple Silicon と Intel（ユニバーサルバイナリ）※要確認（[§10](#10-未決事項要確認事項)） |
 | 言語 | 日本語 UI のみ。文言は辞書ファイルに集約し、将来の多言語化に備える |
 | 開発環境 | Node.js 26、pnpm 12、TypeScript 7、Rust stable。pnpm と Node.js のバージョンは `package.json` で固定し、Node.js は pnpm が取得する（[01 §8](01-architecture.md#8-開発環境とツールチェーン)） |
@@ -154,7 +154,7 @@ requirements.txt の機能をすべて対象とする。本書では以下の要
 | D8 | 転送は aws-sdk-s3 のマルチパート API を使う自前の転送マネージャで行う | 公式の Rust 版 S3 Transfer Manager はデベロッパープレビューで本番利用が推奨されていない | `aws-sdk-s3-transfer-manager` |
 | D9 | Rust と TypeScript の型は ts-rs で生成して共有する | 安定版。tauri-specta v2 はまだ RC | tauri-specta |
 | D10 | フロントエンドの状態は、サーバー由来のデータを TanStack Query、UI 状態を Zustand で管理する | キャッシュ・再取得・楽観的更新を標準化し、UI 状態を単純に保つ | Redux Toolkit |
-| D11 | 配布は Developer ID 署名 + 公証済みの DMG を GitHub Releases で行い、tauri-plugin-updater で自動更新する | Mac App Store を使わない配布の標準的な構成 | Mac App Store |
+| D11 | 配布はアドホック署名（Hardened Runtime）の DMG を GitHub Releases で行い、tauri-plugin-updater で自動更新する。公証の代わりに、GitHub の構成証明と SHA-256 で配布物の出所を確認できるようにする | Developer ID 署名と公証には Apple Developer Program（有料）への加入が必要で、加入していない。アドホック署名は無料で、Apple Silicon で動かすのに必要な署名を満たす。初回起動時に利用者が「プライバシーとセキュリティ」で許可する必要がある（[08 §6.1](08-cicd.md#61-利用者のインストール手順リリースノートに記載する)） | Developer ID 署名 + 公証（有料）、自己署名証明書（署名者は固定できるが、Gatekeeper の扱いはアドホック署名と同じで、証明書の管理が増える）、署名なし（Apple Silicon で「壊れている」と表示される）、Mac App Store |
 | D12 | E2E テストは WebdriverIO + `@wdio/tauri-service`（アプリ内蔵の WebDriver サーバー）で行う | macOS の WKWebView には公式の WebDriver がなく、`tauri-driver` は macOS 非対応 | 手動テストのみ |
 | D13 | Lint・フォーマットは Biome、型検査は TypeScript 7 の `tsc` で行う | TypeScript 7.0 には外部ツール向けの API がなく、typescript-eslint など API に依存するツールが使えない。Biome は独自の解析器で動くため影響を受けない | ESLint + typescript-eslint（TypeScript 6 の併用が必要） |
 | D14 | 依存の自動更新は Renovate で行い、脆弱性の検出は CI の `pnpm audit` と `cargo deny` を正とする | pnpm 11 以降のロックファイルを Dependabot と GitHub の依存関係グラフが正しく解析できない | Dependabot |
@@ -179,7 +179,7 @@ requirements.txt の機能をすべて対象とする。本書では以下の要
 | フェーズ | 内容 | 完了条件 |
 |---|---|---|
 | Phase 0: 基盤 | リポジトリ構成、Tauri v2 + Vite + React の雛形、デザインシステムのトークン取り込み、shadcn/ui（Base UI）導入、ウィンドウ設定（透過タイトルバー・vibrancy）、CI（lint / 型検査 / テスト / ビルド） | 空のメインウィンドウがデザインシステムどおりに表示され、CI が通る |
-| Phase 1: MVP | Google サインイン、バケット接続、一覧・フォルダ移動、アップロード／ダウンロード（マルチパート）、削除、フォルダ作成、メタデータ表示、署名・公証付きリリース | REQ-F01, F04〜F07, F09, P01 と、F11 のフォルダ作成・表示を満たす |
+| Phase 1: MVP | Google サインイン、バケット接続、一覧・フォルダ移動、アップロード／ダウンロード（マルチパート）、削除、フォルダ作成、メタデータ表示、署名付きリリース | REQ-F01, F04〜F07, F09, P01 と、F11 のフォルダ作成・表示を満たす |
 | Phase 2: 管理機能 | 移動・名前変更、フォルダ削除、ストレージクラス変更（アーカイブの取り出しを含む）、バージョン管理、削除済み項目の表示、検索インデックスとフィルタ | REQ-F03, F10, F11, F12 を満たす |
 | Phase 3: 可視化と仕上げ | ストレージとコスト（CloudWatch / Cost Explorer / Price List）、設定ウィンドウ、メニューバー常駐、自動更新 | REQ-F02, F08 を満たし、全要件のテスト観点を消化する |
 | Phase 4: 将来拡張 | 転送の再開、Google ID トークンによる AssumeRoleWithWebIdentity、S3 Inventory 連携、プレビュー（Quick Look）、Finder へのドラッグアウト、署名付き URL での共有 | 個別に判断 |
@@ -219,3 +219,4 @@ requirements.txt の機能をすべて対象とする。本書では以下の要
 | 0.1 | 2026-09-27 | 初版ドラフト |
 | 0.2 | 2026-09-27 | 開発ツールを最新版に更新（pnpm 12、Node.js 26、TypeScript 7、Vitest 5、keyring 4 系の構成）。バージョンの固定方法（[01 §8](01-architecture.md#8-開発環境とツールチェーン)）を追加。CI を `pnpm/setup` に、依存の自動更新を Renovate に変更。デザインシステムの写しを `design-system/` に追加 |
 | 0.3 | 2026-09-27 | Cost Explorer の取得を手動の「更新」のみに変更（自動更新と更新間隔の設定を廃止）（[04 §13.4](04-features.md#134-取得のタイミングと料金)） |
+| 0.4 | 2026-09-27 | Apple Developer Program に加入しないため、リリースを Developer ID 署名 + 公証からアドホック署名 + GitHub の構成証明に変更（D11、[08 §4](08-cicd.md#4-releaseyml)、[07 §8](07-security.md#8-配布物の完全性)） |
