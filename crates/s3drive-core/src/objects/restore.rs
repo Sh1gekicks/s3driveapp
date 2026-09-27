@@ -7,7 +7,9 @@ use rusqlite::params;
 use super::{ObjectService, head, list_recursive};
 use crate::aws::error_map::{self, Ctx};
 use crate::error::{CoreError, CoreResult, ErrorCode};
-use crate::model::{BatchResult, RestoreState, RestoreTier, StorageClass, Target};
+use crate::model::{
+    BatchResult, RestoreCompleted, RestoreState, RestoreTier, StorageClass, Target,
+};
 use crate::util::{key, time};
 
 /// HeadObject の `x-amz-restore` を解釈する。`archived` はアーカイブ（取り出しが必要なクラス・階層）か。
@@ -33,14 +35,6 @@ pub fn parse_restore_header(header: Option<&str>, archived: bool) -> RestoreStat
         None if archived => RestoreState::Archived,
         None => RestoreState::NotArchived,
     }
-}
-
-/// 取り出しの完了（`restore://completed` イベントのペイロード）。
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RestoreCompleted {
-    pub connection_id: String,
-    pub key: String,
 }
 
 impl ObjectService<'_> {

@@ -21,7 +21,7 @@ use crate::util::{key, time};
 
 pub use batch::relocation_plan;
 pub use copy::MULTIPART_COPY_THRESHOLD;
-pub use restore::{RestoreCompleted, parse_restore_header};
+pub use restore::parse_restore_header;
 
 /// フォルダの集計で列挙する上限（04 §9.3）。
 pub const SUMMARY_LIMIT: usize = 100_000;

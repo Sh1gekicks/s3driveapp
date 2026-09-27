@@ -1,0 +1,39 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings",
+  "description": "設定ウィンドウ。settings_*・connection_*・credential_*・search_index_*・app_* のみを許可する（05 §8）",
+  "windows": [
+    "settings"
+  ],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "log:default",
+    "allow-connection-list",
+    "allow-connection-test",
+    "allow-connection-create",
+    "allow-connection-update",
+    "allow-connection-patch",
+    "allow-connection-delete",
+    "allow-connection-reorder",
+    "allow-connection-last-location",
+    "allow-connection-set-location",
+    "allow-credential-list",
+    "allow-credential-update",
+    "allow-search-index-status",
+    "allow-search-index-rebuild",
+    "allow-search-index-delete",
+    "allow-settings-get",
+    "allow-settings-update",
+    "allow-app-set-theme",
+    "allow-app-open-settings",
+    "allow-app-startup-info",
+    "allow-app-open-logs",
+    "allow-app-clear-cache",
+    "allow-app-check-update",
+    "allow-app-install-update",
+    "allow-app-notify",
+    "allow-app-choose-download-dir"
+  ]
+}

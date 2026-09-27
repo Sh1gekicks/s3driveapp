@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-objects-change-storage-class"
+description = "Enables the objects_change_storage_class command without any pre-configured scope."
+commands.allow = ["objects_change_storage_class"]
+
+[[permission]]
+identifier = "deny-objects-change-storage-class"
+description = "Denies the objects_change_storage_class command without any pre-configured scope."
+commands.deny = ["objects_change_storage_class"]

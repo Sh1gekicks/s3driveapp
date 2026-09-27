@@ -78,6 +78,31 @@ impl AuthProvider for FixedAuth {
     }
 }
 
+/// Google の OAuth クライアントがビルド時に設定されていない場合の実装（リリースビルド）。
+pub struct UnconfiguredAuth;
+
+#[async_trait]
+impl AuthProvider for UnconfiguredAuth {
+    async fn sign_in(
+        &self,
+        _open_url: &UrlOpener,
+        _cancel: CancellationToken,
+    ) -> CoreResult<SignInResult> {
+        Err(CoreError::with_message(
+            ErrorCode::AuthRequired,
+            "Google の OAuth クライアントが設定されていないため、サインインできません",
+        ))
+    }
+
+    async fn refresh(&self, _refresh_token: &str) -> CoreResult<UserSession> {
+        Err(CoreError::new(ErrorCode::AuthRequired))
+    }
+
+    async fn revoke(&self, _refresh_token: &str) -> CoreResult<()> {
+        Ok(())
+    }
+}
+
 impl Core {
     /// 起動時のセッション復元（04 §1.3）。サインインが必要なら `None`。
     pub async fn auth_restore(&self) -> CoreResult<Option<UserSession>> {

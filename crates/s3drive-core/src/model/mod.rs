@@ -1,5 +1,6 @@
 //! IPC で受け渡す DTO（serde + ts-rs）。型は `cargo test` で `src/lib/ipc/bindings` に書き出される。
 
+mod app;
 mod common;
 mod connection;
 mod metrics;
@@ -8,6 +9,7 @@ mod search;
 mod settings;
 mod transfer;
 
+pub use app::*;
 pub use common::*;
 pub use connection::*;
 pub use metrics::*;
