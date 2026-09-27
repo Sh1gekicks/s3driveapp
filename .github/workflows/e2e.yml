@@ -1,0 +1,65 @@
+# E2E テスト（09 §2.5）。`e2e` 機能を有効にしたアプリを moto に接続し、WebdriverIO で操作する。
+name: E2E
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # 毎晩 3:00 JST
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # PR では `e2e` ラベルが付いている場合だけ実行する
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      S3DRIVE_TEST_ENDPOINT: http://localhost:5000
+      S3DRIVE_E2E_BUCKET: s3drive-e2e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          cache: true
+          require-lockfile: true
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # macOS のランナーには Docker がないため、moto はサーバーとして直接起動する（docker-compose.test.yml と同じ版）
+      - name: moto の起動とバケットの作成
+        run: |
+          python3 -m venv "$RUNNER_TEMP/moto"
+          "$RUNNER_TEMP/moto/bin/pip" install --quiet 'moto[server]==5.1.22'
+          "$RUNNER_TEMP/moto/bin/moto_server" -H 127.0.0.1 -p 5000 > "$RUNNER_TEMP/moto.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -sf http://localhost:5000/ > /dev/null && break; sleep 1; done
+          curl -sf -X PUT "http://localhost:5000/$S3DRIVE_E2E_BUCKET"
+          # Content-Type を付けないとフォームとして扱われ、moto が 404 を返す
+          curl -sf -X PUT -H 'Content-Type: application/xml' "http://localhost:5000/$S3DRIVE_E2E_BUCKET?versioning" \
+            --data-binary @e2e/fixtures/versioning.xml
+          curl -sf "http://localhost:5000/$S3DRIVE_E2E_BUCKET?versioning" | grep -q Enabled
+
+      - name: アプリのビルド（e2e 機能）
+        run: pnpm e2e:build
+
+      - run: pnpm e2e
+
+      - name: ログの保存
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-logs
+          path: |
+            e2e/.artifacts/
+            ${{ runner.temp }}/moto.log
+            ~/Library/Logs/io.github.sh1gekicks.s3drive*/
+          if-no-files-found: ignore

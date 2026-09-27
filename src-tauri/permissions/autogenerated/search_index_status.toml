@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-search-index-status"
+description = "Enables the search_index_status command without any pre-configured scope."
+commands.allow = ["search_index_status"]
+
+[[permission]]
+identifier = "deny-search-index-status"
+description = "Denies the search_index_status command without any pre-configured scope."
+commands.deny = ["search_index_status"]

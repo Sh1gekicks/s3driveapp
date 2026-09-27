@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-choose-download-dir"
+description = "Enables the app_choose_download_dir command without any pre-configured scope."
+commands.allow = ["app_choose_download_dir"]
+
+[[permission]]
+identifier = "deny-app-choose-download-dir"
+description = "Denies the app_choose_download_dir command without any pre-configured scope."
+commands.deny = ["app_choose_download_dir"]

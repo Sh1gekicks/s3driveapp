@@ -1,0 +1,49 @@
+# cargo deny の設定（07 §7、08 §3 の audit ジョブ）。
+# 実行: cargo deny check
+
+[graph]
+# リリースするのは macOS のみ。Windows／Linux 専用の依存は検査の対象外にする
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+all-features = true
+
+[advisories]
+# RustSec の勧告。例外にするときは ID と理由を書く
+ignore = [
+  # rsa（openidconnect 経由）の Marvin Attack。修正版は未公開。影響するのは秘密鍵での復号・署名の処理時間だが、
+  # このアプリは Google の ID トークンの署名を公開鍵で検証するだけで、秘密鍵の操作を行わない
+  { id = "RUSTSEC-2023-0071", reason = "rsa は公開鍵による署名検証のみに使い、秘密鍵の操作がないため影響しない" },
+]
+
+[licenses]
+# 配布物に含めてよいライセンス（いずれも寛容なライセンス）
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "0BSD",
+  "BSL-1.0",
+  "CC0-1.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "CDLA-Permissive-2.0",
+  "BlueOak-1.0.0",
+  # 弱いコピーレフト（ファイル単位）。改変せずに利用するため配布上の義務は告知のみ
+  "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# 同じクレートの複数バージョンは AWS SDK・Tauri の依存で避けられないため警告にとどめる
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

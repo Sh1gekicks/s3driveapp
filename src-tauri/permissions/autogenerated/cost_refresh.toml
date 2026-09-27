@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cost-refresh"
+description = "Enables the cost_refresh command without any pre-configured scope."
+commands.allow = ["cost_refresh"]
+
+[[permission]]
+identifier = "deny-cost-refresh"
+description = "Denies the cost_refresh command without any pre-configured scope."
+commands.deny = ["cost_refresh"]

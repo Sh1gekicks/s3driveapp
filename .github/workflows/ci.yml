@@ -1,0 +1,83 @@
+# CI（08 §3）。静的解析・型検査・テスト・ビルド・脆弱性検査。
+# アクションはコミット SHA で固定する（07 §7）。SHA の更新は Renovate に任せる。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # pnpm 12 と Node.js（.node-version）を導入し、ロックファイルどおりに pnpm install まで行う
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          cache: true
+          require-lockfile: true
+      - run: pnpm biome ci .
+      - run: pnpm typecheck
+      - run: pnpm vitest run --coverage
+      - run: pnpm vite build
+
+  core:
+    runs-on: ubuntu-latest
+    services:
+      # 5.2 系は GetBucketVersioning の応答が S3 と異なるため 5.1 系に固定する（docker-compose.test.yml）
+      moto:
+        image: motoserver/moto:5.1.22
+        ports: ["5000:5000"]
+    env:
+      S3DRIVE_TEST_ENDPOINT: http://localhost:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy -p s3drive-core --all-targets --locked -- -D warnings
+      # 単体テストと moto を使う結合テスト。ts-rs の型定義もここで書き出される
+      - run: cargo test -p s3drive-core --locked
+      - name: 型定義（ts-rs）に差分がないことの確認
+        run: git diff --exit-code -- src/lib/ipc/bindings
+
+  app:
+    runs-on: macos-latest
+    needs: [frontend, core]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          cache: true
+          require-lockfile: true
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy -p s3drive-app --all-targets --locked -- -D warnings
+      - run: cargo clippy -p s3drive-app --all-targets --locked --features e2e -- -D warnings
+      - run: cargo test -p s3drive-app --locked
+      # 署名なしで macOS 向けのビルドが通ることを確認する
+      - run: pnpm tauri build --debug --bundles app
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          install: false # audit はロックファイルだけで実行できる
+      - run: pnpm audit --prod --audit-level high

@@ -1,0 +1,39 @@
+[package]
+name = "s3drive-app"
+version = "0.1.0"
+description = "S3 Drive（macOS アプリ本体）"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "s3drive_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# E2E テスト用ビルド（WebDriver サーバーを内蔵し、Google サインインを固定のセッションにする。09 §2.5）
+e2e = ["dep:tauri-plugin-wdio-webdriver"]
+
+[build-dependencies]
+tauri-build = { version = "~2.6", features = [] }
+
+[dependencies]
+s3drive-core.workspace = true
+# npm の @tauri-apps/api・@tauri-apps/cli と同じマイナー版にそろえる（Tauri の CLI は不一致をエラーにする）。
+# 更新するときは npm 側と同時に上げる（Renovate のグループで扱う）
+tauri = { version = "~2.11", features = ["macos-private-api", "tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-log = "~2.9"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-clipboard-manager = "~2.3"
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+tokio.workspace = true

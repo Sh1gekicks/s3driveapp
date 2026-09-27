@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-auth-cancel-sign-in"
+description = "Enables the auth_cancel_sign_in command without any pre-configured scope."
+commands.allow = ["auth_cancel_sign_in"]
+
+[[permission]]
+identifier = "deny-auth-cancel-sign-in"
+description = "Denies the auth_cancel_sign_in command without any pre-configured scope."
+commands.deny = ["auth_cancel_sign_in"]

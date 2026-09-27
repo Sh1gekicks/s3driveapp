@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-startup-info"
+description = "Enables the app_startup_info command without any pre-configured scope."
+commands.allow = ["app_startup_info"]
+
+[[permission]]
+identifier = "deny-app-startup-info"
+description = "Denies the app_startup_info command without any pre-configured scope."
+commands.deny = ["app_startup_info"]

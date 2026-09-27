@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-deleted-restore"
+description = "Enables the deleted_restore command without any pre-configured scope."
+commands.allow = ["deleted_restore"]
+
+[[permission]]
+identifier = "deny-deleted-restore"
+description = "Denies the deleted_restore command without any pre-configured scope."
+commands.deny = ["deleted_restore"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-metrics-storage"
+description = "Enables the metrics_storage command without any pre-configured scope."
+commands.allow = ["metrics_storage"]
+
+[[permission]]
+identifier = "deny-metrics-storage"
+description = "Denies the metrics_storage command without any pre-configured scope."
+commands.deny = ["metrics_storage"]

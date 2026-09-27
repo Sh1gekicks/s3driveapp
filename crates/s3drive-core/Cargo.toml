@@ -1,0 +1,68 @@
+[package]
+name = "s3drive-core"
+version = "0.1.0"
+description = "S3 Drive のドメイン・AWS・DB・検索（Tauri 非依存）"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-sts.workspace = true
+aws-sdk-cloudwatch.workspace = true
+aws-sdk-costexplorer.workspace = true
+aws-sdk-pricing.workspace = true
+aws-credential-types.workspace = true
+aws-smithy-types = { workspace = true, features = ["http-body-1-x"] }
+aws-smithy-runtime-api.workspace = true
+aws-types.workspace = true
+rusqlite.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
+rusqlite_migration.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+thiserror.workspace = true
+log.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+mime_guess.workspace = true
+unicode-normalization.workspace = true
+walkdir.workspace = true
+filetime.workspace = true
+keyring-core = "1"
+openidconnect = "4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+http-body = "1"
+rand = "0.9"
+url = "2"
+percent-encoding = "2"
+async-trait = "0.1"
+base64 = "0.22"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
+[dev-dependencies]
+aws-smithy-mocks = "0.3"
+aws-sdk-s3 = { workspace = true, features = ["test-util"] }
+aws-sdk-sts = { workspace = true, features = ["test-util"] }
+aws-sdk-cloudwatch = { workspace = true, features = ["test-util"] }
+aws-sdk-costexplorer = { workspace = true, features = ["test-util"] }
+aws-sdk-pricing = { workspace = true, features = ["test-util"] }
+tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }

@@ -1,0 +1,28 @@
+# Node / pnpm
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Rust / Tauri
+target/
+src-tauri/gen/schemas/
+
+# Playwright
+test-results/
+playwright-report/
+e2e/.cache/
+e2e/.artifacts/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.claude/settings.local.json
+
+# Local env
+.env
+.env.local
+*.p8
+*.p12

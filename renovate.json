@@ -1,0 +1,29 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Asia/Tokyo",
+  "schedule": ["before 9am on monday"],
+  "minimumReleaseAge": "1 day",
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["motoserver/moto"],
+      "allowedVersions": "<5.2",
+      "description": "moto 5.2 系は GetBucketVersioning の応答が SDK と互換でない"
+    },
+    {
+      "groupName": "Tauri",
+      "matchPackageNames": ["/^@tauri-apps\\//", "/^tauri(-.*)?$/"],
+      "description": "npm パッケージと Rust クレートのマイナー版をそろえて更新する"
+    },
+    {
+      "groupName": "WebdriverIO",
+      "matchPackageNames": ["webdriverio", "/^@wdio\\//"],
+      "description": "E2E（09 §2.5）。@wdio/tauri-service は版を固定しており、E2E が通ることを確認してから取り込む"
+    }
+  ]
+}
