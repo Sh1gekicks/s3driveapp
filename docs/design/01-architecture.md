@@ -74,7 +74,7 @@ flowchart TB
 | Tauri プラグイン | dialog、opener、store、log、updater、process、window-state、single-instance、notification、clipboard-manager | 用途は §6.3 |
 | 非同期 | tokio、tokio-util（`CancellationToken`）、futures | |
 | AWS SDK | aws-config、aws-sdk-s3、aws-sdk-sts、aws-sdk-cloudwatch、aws-sdk-costexplorer、aws-sdk-pricing | REQ-T01。`BehaviorVersion::latest()` |
-| キーチェーン | keyring-core 1.x ＋ apple-native-keyring-store 1.x（`keychain` モジュール） | keyring 4 系で、API（keyring-core）と OS ごとの保存先が別クレートに分かれた構成。Developer ID で署名した App Store 外のアプリでは `keychain` モジュールを使う |
+| キーチェーン | keyring-core 1.x ＋ apple-native-keyring-store 1.x（`keychain` モジュール） | keyring 4 系で、API（keyring-core）と OS ごとの保存先が別クレートに分かれた構成。App Store 外で配布するアプリ（アドホック署名。データ保護キーチェーンに必要な entitlements を使えない）では `keychain` モジュールを使う |
 | DB | rusqlite（`bundled`、FTS5 を含む）、r2d2_sqlite、rusqlite_migration | |
 | Google 認証 | openidconnect 4（PKCE、ID トークン検証）、reqwest（rustls） | |
 | ループバック受信 | hyper 1.x（最小の HTTP サーバー） | OAuth のリダイレクト受信専用 |

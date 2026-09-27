@@ -73,5 +73,8 @@ Rust の型を変更したら `cargo test -p s3drive-core` で `src/lib/ipc/bind
 
 ## リリース
 
-`package.json` の `version` を更新してマージし、`vX.Y.Z` のタグを push すると、`release.yml` が署名・公証済みのビルドを下書きのリリースとして作ります（[08 §4](docs/design/08-cicd.md#4-releaseyml)）。
-必要なシークレットは [08 §5](docs/design/08-cicd.md#5-シークレットと変数) のとおりです。加えて、自動更新の公開鍵をリポジトリの変数 `TAURI_UPDATER_PUBKEY` に設定してください（`pnpm tauri signer generate` で作成。リリース時に `tauri.conf.json` へ重ねて設定します）。
+`package.json` の `version` を更新してマージし、`vX.Y.Z` のタグを push すると、`release.yml` がアドホック署名したビルドを下書きのリリースとして作ります（[08 §4](docs/design/08-cicd.md#4-releaseyml)）。
+Apple Developer Program（有料）には加入していないため、公証は行いません。代わりに GitHub の構成証明を付け、SHA-256 をジョブのサマリーに出力します。
+必要なシークレットと変数は [08 §5](docs/design/08-cicd.md#5-シークレットと変数) のとおりです。自動更新の公開鍵はリポジトリの変数 `TAURI_UPDATER_PUBKEY` に設定してください（`pnpm tauri signer generate` で作成。リリース時に `tauri.conf.json` へ重ねて設定します）。
+
+公証していないため、ダウンロードしたアプリは初回起動時に macOS に止められます。リリースノートには、[08 §6.1](docs/design/08-cicd.md#61-利用者のインストール手順リリースノートに記載する) のインストール手順（「システム設定」→「プライバシーとセキュリティ」で「このまま開く」）を記載してください。

@@ -52,6 +52,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "13.0",
+      "signingIdentity": "-",
       "hardenedRuntime": true
     }
   },
