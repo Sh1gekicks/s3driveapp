@@ -1,0 +1,24 @@
+<!-- @dsCard group="Components" viewport="700x400" name="Feedback" subtitle="Badge · StorageClassBadge · Progress · Toast · Tooltip · Dialog" -->
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>card</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script src="../../_ds_bundle.js"></script>
+<script src="../../ds-resolve.js"></script>
+<style>body{padding:16px}.pane{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:10px;background:var(--background);color:var(--foreground);box-shadow:0 0 0 0.5px var(--border)}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}</style></head><body><div id="root"></div>
+<script type="text/babel">
+const DS = window.DS;
+const { Badge, StorageClassBadge, Progress, Toast, Tooltip, IconButton, Dialog, Button } = DS;
+const Demo = () => <>
+  <div className="row"><Badge variant="success">最新</Badge><Badge variant="warning" icon="clock">復元中</Badge><Badge variant="destructive">削除マーカー</Badge><Badge variant="outline">v12</Badge></div>
+  <div className="row"><StorageClassBadge value="STANDARD"/><StorageClassBadge value="STANDARD_IA"/><StorageClassBadge value="GLACIER_IR"/><StorageClassBadge value="DEEP_ARCHIVE"/></div>
+  <Progress max={500} height={8} segments={[{value:180,color:'var(--sc-standard)'},{value:42,color:'var(--sc-standard-ia)'},{value:20,color:'var(--sc-glacier-ir)'},{value:6,color:'var(--sc-deep-archive)'}]}/>
+  <Toast icon="upload" title="3 件をアップロード中" description="report-q3.pdf · 12.4 / 18.0 MB" progress={68} style={{width:'100%'}}/>
+  <div className="row" style={{paddingLeft:40}}><Tooltip content="アップロード ⌘U" open side="bottom"><IconButton icon="upload" label="アップロード"/></Tooltip></div>
+  <div style={{position:'relative',height:150,marginTop:16,borderRadius:8,overflow:'hidden'}}><Dialog width={300} icon="trash-2" tone="destructive" title="2 項目を削除しますか？" description="この操作は取り消せません。" footer={<><Button size="sm" variant="outline">キャンセル</Button><Button size="sm" variant="destructive">削除</Button></>}/></div>
+</>;
+const Pane = ({theme, children}) => <div data-theme={theme} className="pane" style={{flex:1,minWidth:0}}>{children}</div>;
+ReactDOM.createRoot(document.getElementById('root')).render(<div style={{display:'flex',gap:12}}><Pane theme="light"><Demo/></Pane><Pane theme="dark"><Demo/></Pane></div>);
+</script></body></html>

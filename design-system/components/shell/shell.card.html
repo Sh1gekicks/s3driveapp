@@ -1,0 +1,20 @@
+<!-- @dsCard group="Components" viewport="700x340" name="App window" subtitle="AppWindow — transparent titlebar + vibrant sidebar" -->
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>card</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script src="../../_ds_bundle.js"></script>
+<script src="../../ds-resolve.js"></script>
+<style>body{padding:16px}.pane{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:10px;background:var(--background);color:var(--foreground);box-shadow:0 0 0 0.5px var(--border)}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}</style></head><body><div id="root"></div>
+<script type="text/babel">
+const { AppWindow, SidebarSection, SidebarItem, Breadcrumbs, IconButton, Input } = window.DS;
+const W = ({theme}) => <div data-theme={theme} style={{flex:1,padding:14,background:'repeating-linear-gradient(135deg,var(--azure-200) 0 12px,var(--azure-300) 12px 24px)',borderRadius:10}}>
+ <AppWindow width="100%" height={280}
+  sidebar={<SidebarSection title="バケット"><SidebarItem icon="database" label="acme-media" active/><SidebarItem icon="database" label="acme-backup"/></SidebarSection>}
+  toolbar={<><Breadcrumbs items={[{label:'acme-media'},{label:'2026'}]}/><div style={{flex:1}}/><IconButton icon="upload" label="アップロード"/></>}>
+  <div style={{padding:14,fontSize:12,color:'var(--muted-foreground)'}}>コンテンツ領域</div>
+ </AppWindow></div>;
+ReactDOM.createRoot(document.getElementById('root')).render(<div style={{display:'flex',gap:12}}><W theme="light"/><W theme="dark"/></div>);
+</script></body></html>

@@ -1,0 +1,33 @@
+<!-- @dsCard group="S3 Drive App" viewport="1280x820" name="S3 Drive — main window" subtitle="Interactive: browse, upload, move, delete, versions, storage class, cost" -->
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>S3 Drive — UI kit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="../../styles.css">
+<style>
+  body { background: color-mix(in oklch, var(--background) 88%, var(--azure-500)); overflow: hidden; }
+</style>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script src="../../ds-resolve.js"></script>
+<script src="data.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="SignIn.jsx"></script>
+<script type="text/babel" src="Sidebar.jsx"></script>
+<script type="text/babel" src="Toolbar.jsx"></script>
+<script type="text/babel" src="FileList.jsx"></script>
+<script type="text/babel" src="Inspector.jsx"></script>
+<script type="text/babel" src="Dashboard.jsx"></script>
+<script type="text/babel" src="Dialogs.jsx"></script>
+<script type="text/babel" src="App.jsx"></script>
+<script type="text/babel">
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
