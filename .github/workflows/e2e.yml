@@ -45,7 +45,7 @@ jobs:
           curl -sf -X PUT "http://localhost:5000/$S3DRIVE_E2E_BUCKET"
           # Content-Type を付けないとフォームとして扱われ、moto が 404 を返す
           curl -sf -X PUT -H 'Content-Type: application/xml' "http://localhost:5000/$S3DRIVE_E2E_BUCKET?versioning" \
-            --data-binary '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>'
+            --data-binary @e2e/fixtures/versioning.xml
           curl -sf "http://localhost:5000/$S3DRIVE_E2E_BUCKET?versioning" | grep -q Enabled
 
       - name: アプリのビルド（e2e 機能）

@@ -2,17 +2,7 @@
 @import "./tokens/colors.css"; /* DS: tokens/colors.css（ライト／ダーク） */
 @import "./tokens/layout.css"; /* DS: tokens/spacing.css のうちサイズ・モーション・マテリアル */
 
-/* dark: バリアントを OS 設定（自動）と明示指定の両方に追従させる（02 §4） */
-@custom-variant dark {
-  @media (prefers-color-scheme: dark) {
-    &:where(:root:not([data-theme="light"]) *) {
-      @slot;
-    }
-  }
-  &:where([data-theme="dark"] *) {
-    @slot;
-  }
-}
+/* ライト／ダークの切り替えは tokens/colors.css の CSS 変数で行う（02 §4）。dark: バリアントは使わない */
 
 @theme {
   /* DS: tokens/typography.css */
@@ -139,12 +129,6 @@
 }
 @utility hairline-r {
   border-right: var(--hairline) solid var(--border);
-}
-@utility focus-ring {
-  outline: none;
-  &:focus-visible {
-    box-shadow: 0 0 0 3px var(--ring-soft);
-  }
 }
 
 @layer base {

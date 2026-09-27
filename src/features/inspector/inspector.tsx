@@ -315,7 +315,8 @@ function Versions({
               {v.isDeleteMarker ? <Badge variant="destructive">{ja.list.deleteMarker}</Badge> : null}
             </div>
             <div className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">
-              <span className="shrink-0 tabular-nums">{formatSize(v.size)}</span>·
+              <span className="shrink-0 tabular-nums">{formatSize(v.size)}</span>
+              <span aria-hidden="true">·</span>
               <span className="truncate font-mono text-[10.5px] selectable" title={v.versionId}>
                 {v.versionId}
               </span>

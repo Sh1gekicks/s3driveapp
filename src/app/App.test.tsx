@@ -118,6 +118,22 @@ describe('SCR-02 ファイルブラウザ', () => {
     expect(within(inspector).getByRole('button', { name: 'ダウンロード' })).toBeInTheDocument();
   });
 
+  it('⌘クリックで複数選択し、空白部分のクリックで選択を解除する', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const list = await screen.findByRole('listbox', { name: 'acme-media-tokyo' });
+    await user.pointer({ keys: '[MouseLeft]', target: within(list).getByText('README.md') });
+    await user.keyboard('{Meta>}');
+    await user.pointer({ keys: '[MouseLeft]', target: within(list).getByText('logo.png') });
+    await user.keyboard('{/Meta}');
+    expect(useUiStore.getState().selection.keys).toEqual(['README.md', 'logo.png']);
+
+    const scroller = list.closest('.overflow-auto');
+    if (!scroller) throw new Error('スクロール領域がありません');
+    await user.pointer({ keys: '[MouseLeft]', target: scroller });
+    expect(useUiStore.getState().selection.keys).toEqual([]);
+  });
+
   it('新規フォルダを作成すると一覧に追加して選択する', async () => {
     const user = userEvent.setup();
     renderApp();

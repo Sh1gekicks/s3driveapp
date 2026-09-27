@@ -119,7 +119,7 @@ export function useLocationPersistence(active: boolean) {
     if (!active) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let prev = '';
-    return useNavStore.subscribe((s) => {
+    const unsubscribe = useNavStore.subscribe((s) => {
       if (!s.connectionId) return;
       const key = `${s.connectionId}\n${s.prefix}`;
       if (key === prev) return;
@@ -128,5 +128,10 @@ export function useLocationPersistence(active: boolean) {
       const location = { connectionId: s.connectionId, prefix: s.prefix };
       timer = setTimeout(() => void ipc.connections.setLocation(location).catch(() => {}), 500);
     });
+    // サインアウトなどで購読をやめたあとに、保留中の保存が遅れて届かないようにする
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
   }, [active]);
 }

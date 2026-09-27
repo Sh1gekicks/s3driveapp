@@ -281,7 +281,8 @@ export class MockBackend {
         return;
       }
       job.status = 'running';
-      const chunk = Math.max(1, Math.round(job.totalBytes * (0.09 + Math.random() * 0.14)));
+      // 1 回に全体の 16% ずつ進める（見た目を安定させるため乱数は使わない）
+      const chunk = Math.max(1, Math.round(job.totalBytes * 0.16));
       job.doneBytes = Math.min(job.totalBytes, job.doneBytes + chunk);
       job.bytesPerSec = chunk * (1000 / Math.max(1, this.tick));
       job.etaSec = job.bytesPerSec > 0 ? Math.ceil((job.totalBytes - job.doneBytes) / job.bytesPerSec) : null;

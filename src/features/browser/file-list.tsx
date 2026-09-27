@@ -162,6 +162,23 @@ export function FileList({
     paddingEnd: viewMode === 'list' ? 4 : GRID_PAD,
   });
 
+  // 空白部分のクリック・右クリックで選択を解除する（キーボードでは Esc）。項目の上では項目側の処理に任せる
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const clear = (e: MouseEvent) => {
+      if (e.type === 'mousedown' && e.button !== 0) return;
+      if (e.target instanceof Element && e.target.closest('[aria-selected]')) return;
+      useUiStore.getState().select(null, {}, []);
+    };
+    el.addEventListener('mousedown', clear);
+    el.addEventListener('contextmenu', clear);
+    return () => {
+      el.removeEventListener('mousedown', clear);
+      el.removeEventListener('contextmenu', clear);
+    };
+  }, []);
+
   // キーボードで選択を動かしたら、選択した行が見えるようにする
   const lastSelected = selectionKeys[selectionKeys.length - 1];
   React.useEffect(() => {
@@ -453,19 +470,7 @@ export function FileList({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col" {...htmlDnd}>
       <ContextMenu items={menuItems} onSelect={onMenu} className="flex min-h-0 flex-1 flex-col">
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: 空白部分のクリックで選択を解除する（キーボードは一覧全体のショートカットで扱う） */}
-        <div
-          ref={scrollRef}
-          className="min-h-0 flex-1 overflow-auto"
-          onMouseDown={(e) => {
-            if (e.button === 0) useUiStore.getState().select(null, {}, order);
-          }}
-          onContextMenu={(e) => {
-            if (e.target === e.currentTarget || !(e.target as HTMLElement).closest('[aria-selected]')) {
-              useUiStore.getState().select(null, {}, order);
-            }
-          }}
-        >
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
           {body}
         </div>
       </ContextMenu>

@@ -29,11 +29,7 @@ export function AppShell({ sidebar, toolbar, inspector, overlayInspector, childr
         <div className="relative flex min-h-0 flex-1 flex-col">
           {children}
           {overlayInspector ? (
-            // biome-ignore lint/a11y/noStaticElementInteractions: 重ねたインスペクタ内のクリックで一覧の選択が解除されないようにする
-            <div
-              className="absolute top-0 right-0 bottom-0 z-5 w-[min(300px,85%)] overflow-auto bg-background elevation-md hairline-l"
-              onMouseDown={(e) => e.stopPropagation()}
-            >
+            <div className="absolute top-0 right-0 bottom-0 z-5 w-[min(300px,85%)] overflow-auto bg-background elevation-md hairline-l">
               {overlayInspector}
             </div>
           ) : null}
