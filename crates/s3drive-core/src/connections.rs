@@ -548,14 +548,17 @@ impl ConnectionService<'_> {
         self.core.0.jobs.cancel_connection(id);
         self.core.0.transfers.cancel_connection(id);
         let orphan = self.update_account(|account| {
-            let pos = account
+            // 添字で取り除く Vec::remove ではなく retain を使う（範囲外の添字で panic することがなく、
+            // CodeQL の rust/cleartext-logging が Vec::remove の panic メッセージを出力とみなす誤検知も避ける）
+            let credential_id = account
                 .connections
                 .iter()
-                .position(|c| c.id == id)
+                .find(|c| c.id == id)
+                .map(|c| c.credential_id.clone())
                 .ok_or_else(|| {
                     CoreError::with_message(ErrorCode::NotFound, "接続が見つかりません")
                 })?;
-            let removed = account.connections.remove(pos);
+            account.connections.retain(|c| c.id != id);
             if account
                 .last_location
                 .as_ref()
@@ -563,7 +566,7 @@ impl ConnectionService<'_> {
             {
                 account.last_location = None;
             }
-            Ok(remove_unused_credential(account, &removed.credential_id))
+            Ok(remove_unused_credential(account, &credential_id))
         })?;
         if let Some(cid) = orphan {
             self.core.0.secrets.delete(&aws_account(&cid))?;
