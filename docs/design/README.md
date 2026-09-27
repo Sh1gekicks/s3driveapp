@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | 0.2（ドラフト） |
+| 版 | 0.3（ドラフト） |
 | 作成日 | 2026-09-27 |
 | 対象 | S3 Drive App（macOS ネイティブアプリ） |
 | 入力資料 | [requirements.txt](../../requirements.txt)／デザインシステム「S3 Drive デザインシステム」（[Claude Design](https://claude.ai/design/p/2d5c9b6d-736c-4a1d-8ca7-8d2787602a5e)） |
@@ -218,3 +218,4 @@ requirements.txt の機能をすべて対象とする。本書では以下の要
 |---|---|---|
 | 0.1 | 2026-09-27 | 初版ドラフト |
 | 0.2 | 2026-09-27 | 開発ツールを最新版に更新（pnpm 12、Node.js 26、TypeScript 7、Vitest 5、keyring 4 系の構成）。バージョンの固定方法（[01 §8](01-architecture.md#8-開発環境とツールチェーン)）を追加。CI を `pnpm/setup` に、依存の自動更新を Renovate に変更。デザインシステムの写しを `design-system/` に追加 |
+| 0.3 | 2026-09-27 | Cost Explorer の取得を手動の「更新」のみに変更（自動更新と更新間隔の設定を廃止）（[04 §13.4](04-features.md#134-取得のタイミングと料金)） |

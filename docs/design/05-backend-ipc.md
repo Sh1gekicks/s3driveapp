@@ -294,7 +294,8 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | コマンド | 引数 | 戻り値 | 処理 |
 |---|---|---|---|
 | `metrics_storage` | `connectionId`、`force` | `StorageMetrics` | [04 §12.2](04-features.md#122-利用容量cloudwatch) |
-| `cost_summary` | `connectionId`、`force` | `CostSummary` | [04 §13](04-features.md#13-コスト表示) |
+| `cost_summary` | `connectionId` | `CostSummary \| null` | 保存済みの結果を返す（なければ `null`）。Cost Explorer には問い合わせない |
+| `cost_refresh` | `connectionId` | `CostSummary` | Cost Explorer に問い合わせて保存する。ダッシュボードの「更新」「取得」からのみ呼ぶ（[04 §13.4](04-features.md#134-取得のタイミングと料金)） |
 | `pricing_get` | `region` | `PriceTable` | [04 §13.3](04-features.md#133-単価price-list-api) |
 
 ### 3.8 設定・アプリ
