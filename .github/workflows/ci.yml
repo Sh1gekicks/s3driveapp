@@ -76,6 +76,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # AWS のアクセスキー ID の形の文字列をコミットしない（テストでも分けて書く）。design-system/ は DS の写しのため除く
+      - name: アクセスキー ID の形の文字列がないことの確認
+        run: |
+          if git grep -nE '(AKIA|ASIA)[0-9A-Z]{16}' -- . ':!design-system'; then
+            echo "::error::AWS のアクセスキー ID の形の文字列があります。テスト用の値は \"AKIA\" と残りを分けて書いてください"
+            exit 1
+          fi
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:

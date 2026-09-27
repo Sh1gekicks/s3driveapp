@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { connectionSchema, credentialSchema, validateName } from './validation';
 
+// テスト用の架空の値。シークレットスキャンに実在のキーと誤検知されないよう、アクセスキー ID は分けて書く
+const KEY_SUFFIX = 'TESTFAKEKEY00000';
+const KEY_ID = `AKIA${KEY_SUFFIX}`;
+const SECRET = 'test-secret-access-key-for-s3drive-00000';
+
 const base = {
   credentialMode: 'new' as const,
   credentialId: '',
-  accessKeyId: 'AKIA4Z7XEXAMPLE7Q2LM',
-  secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  accessKeyId: KEY_ID,
+  secretAccessKey: SECRET,
   roleArn: '',
   externalId: '',
   region: 'ap-northeast-1',
@@ -24,7 +29,7 @@ describe('接続の入力（03 §4.2）', () => {
   });
 
   it('アクセスキー ID は AKIA で始まる 20 文字', () => {
-    expect(errors({ accessKeyId: 'ASIA4Z7XEXAMPLE7Q2LM' })).toHaveProperty('accessKeyId');
+    expect(errors({ accessKeyId: `ASIA${KEY_SUFFIX}` })).toHaveProperty('accessKeyId');
     expect(errors({ accessKeyId: 'AKIA123' })).toHaveProperty('accessKeyId');
     expect(errors({ accessKeyId: '' }).accessKeyId).toBe('入力してください');
   });

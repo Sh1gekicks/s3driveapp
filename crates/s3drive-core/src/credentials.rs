@@ -213,39 +213,32 @@ impl ProvideCredentials for AssumeRoleCredentials {
 mod tests {
     use super::*;
 
+    // テスト用の架空の値。シークレットスキャンに実在のキーと誤検知されないよう、アクセスキー ID は分けて書く
+    const KEY_ID: &str = concat!("AKIA", "TESTFAKEKEY00000");
+    const SECRET: &str = "test-secret-access-key-for-s3drive-00000";
+
     #[test]
     fn validates_access_key_format() {
-        assert!(
-            AccessKey::new("AKIA4Z7XEXAMPLE7Q2LM", &"a".repeat(40))
-                .validate()
-                .is_ok()
-        );
+        assert!(AccessKey::new(KEY_ID, &"a".repeat(40)).validate().is_ok());
         assert!(
             AccessKey::new("AKIA123", &"a".repeat(40))
                 .validate()
                 .is_err()
         );
         assert!(
-            AccessKey::new("akia4z7xexample7q2lm", &"a".repeat(40))
+            AccessKey::new(&KEY_ID.to_lowercase(), &"a".repeat(40))
                 .validate()
                 .is_err()
         );
-        assert!(
-            AccessKey::new("AKIA4Z7XEXAMPLE7Q2LM", "short")
-                .validate()
-                .is_err()
-        );
+        assert!(AccessKey::new(KEY_ID, "short").validate().is_err());
     }
 
     #[test]
     fn debug_output_masks_secrets() {
-        let key = AccessKey::new(
-            "AKIA4Z7XEXAMPLE7Q2LM",
-            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-        );
+        let key = AccessKey::new(KEY_ID, SECRET);
         let dbg = format!("{key:?}");
-        assert!(!dbg.contains("wJalr"));
-        assert!(!dbg.contains("EXAMPLE7"));
+        assert!(!dbg.contains("test-secret"));
+        assert!(!dbg.contains("FAKEKEY"));
     }
 
     #[test]
@@ -280,7 +273,7 @@ mod tests {
     #[test]
     fn stores_access_keys_as_json() {
         let store = crate::store::MemorySecretStore::new();
-        let key = AccessKey::new("AKIA4Z7XEXAMPLE7Q2LM", &"s".repeat(40));
+        let key = AccessKey::new(KEY_ID, SECRET);
         save_access_key(&store, "c1", &key).unwrap();
         let loaded = load_access_key(&store, "c1").unwrap();
         assert_eq!(loaded.access_key_id, key.access_key_id);
