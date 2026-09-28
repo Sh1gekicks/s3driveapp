@@ -390,6 +390,12 @@ export const ja = {
     cloudwatchNote:
       '容量は CloudWatch の日次メトリクスです（前日分。非現行バージョンと未完了のアップロードを含む）',
     noMetrics: '利用容量を取得できません',
+    noMetricsYet:
+      'CloudWatch に容量のメトリクスがまだありません。1 日 1 回の更新のため、作成したばかりのバケットや、空だったバケットにデータを置いた直後は翌日以降に反映されます。',
+    indexHint:
+      '検索インデックスを作成すると、今あるオブジェクトから集計して表示できます（現行バージョンのみ）。',
+    createIndex: 'インデックスを作成',
+    noObjects: 'オブジェクトはありません',
   },
   settings: {
     title: '設定',

@@ -17,6 +17,7 @@ import { IconButton } from '@/components/ui/icon-button';
 import { Skeleton, Spinner } from '@/components/ui/misc';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Tooltip } from '@/components/ui/tooltip';
+import { showError } from '@/features/errors';
 import { formatDate, formatDelta, formatPercent, formatSize, formatUsd } from '@/lib/format';
 import { ja } from '@/lib/i18n/ja';
 import type { AppError, Connection, CostSummary, StorageClass } from '@/lib/ipc';
@@ -188,6 +189,49 @@ function CostPlaceholder({ connection }: { connection: Connection }) {
   );
 }
 
+/**
+ * CloudWatch のメトリクスも検索インデックスもないとき（04 §12.2）。インデックスを作れば、そこから集計する。
+ */
+function UsageFallback({ connection }: { connection: Connection }) {
+  const queryClient = useQueryClient();
+  const [scanned, setScanned] = React.useState<number | null>(null);
+  const create = () => {
+    setScanned(0);
+    ipc.search
+      .rebuild(connection.id, (e) => {
+        if (e.event === 'progress') setScanned(e.data.scanned);
+        if (e.event === 'finished') {
+          setScanned(null);
+          void queryClient.invalidateQueries({ queryKey: qk.storageMetrics(connection.id) });
+          void queryClient.invalidateQueries({ queryKey: qk.indexStatus(connection.id) });
+        }
+        if (e.event === 'failed') {
+          setScanned(null);
+          showError(e.data.error, '検索インデックスを作成');
+        }
+      })
+      .catch((e) => {
+        setScanned(null);
+        showError(e, '検索インデックスを作成');
+      });
+  };
+  return (
+    <div className="flex flex-col items-start gap-2 text-sm text-muted-foreground">
+      <p className="m-0">{t.noMetricsYet}</p>
+      <p className="m-0">{t.indexHint}</p>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" disabled={scanned != null} onClick={create}>
+          {scanned != null ? <Spinner size={12} /> : null}
+          {t.createIndex}
+        </Button>
+        {scanned != null ? (
+          <span className="text-xs tabular-nums">{ja.filter.indexBuilding(scanned)}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function DailyChart({ cost }: { cost: CostSummary }) {
   const values = cost.daily;
   const known = values.filter((v): v is number => v != null);
@@ -311,8 +355,10 @@ export function Dashboard({ connection }: { connection: Connection }) {
           </CardHead>
           {metrics.isPending ? (
             <Skeleton className="h-24" />
+          ) : m?.source === 'none' ? (
+            <UsageFallback connection={connection} />
           ) : rows.length === 0 ? (
-            <p className="m-0 text-sm text-muted-foreground">{t.noMetrics}</p>
+            <p className="m-0 text-sm text-muted-foreground">{m ? t.noObjects : t.noMetrics}</p>
           ) : (
             <>
               <UsageBar byClass={m?.byClass ?? {}} height={10} label={t.byClass} />

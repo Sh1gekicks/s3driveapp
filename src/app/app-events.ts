@@ -75,6 +75,8 @@ export function useMainEvents() {
       ipc.events.onIndexUpdated((p) => {
         queryClient.setQueryData(qk.indexStatus(p.connectionId), p.status);
         void queryClient.invalidateQueries({ queryKey: qk.search(p.connectionId) });
+        // CloudWatch のメトリクスがなければインデックスから集計しているため（04 §12.2）
+        void queryClient.invalidateQueries({ queryKey: qk.storageMetrics(p.connectionId) });
       }),
       ipc.events.onUpdateAvailable((info) => {
         if (!useUiStore.getState().dialog) {
