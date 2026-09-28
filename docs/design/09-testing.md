@@ -4,15 +4,16 @@
 
 - ロジックの大半を単体テストで確認し、AWS との連携は S3 のモック（moto）を使う結合テスト、主要な操作の流れは少数の E2E テストで確認する。ウィンドウの見た目やネイティブの挙動、実 AWS・実 Google での確認は手動テストで行う。
 - 自動テストはすべて CI で実行する（[08-cicd.md](08-cicd.md)）。
-- カバレッジの目標: `s3drive-core` は行カバレッジ 80% 以上（cargo-llvm-cov）、フロントエンドの `lib` と `features` は 70% 以上（Vitest の v8 カバレッジ）。
+- カバレッジの目標: `s3drive-core` は行カバレッジ 80% 以上（cargo-llvm-cov。単体テストと moto の結合テストの合計）、フロントエンドの `lib` と `features` はそれぞれ行カバレッジ 70% 以上（Vitest の v8 カバレッジ）。CI で計測し、下回ったら失敗させる（`cargo llvm-cov --fail-under-lines 80`、`vite.config.ts` の `coverage.thresholds`）。
 
 | レベル | 対象 | ツール | 実行 |
 |---|---|---|---|
-| Rust 単体 | `s3drive-core` のロジック、SDK 応答の扱い | cargo test、aws-smithy-mocks、insta | CI（Linux） |
+| Rust 単体 | `s3drive-core` のロジック、SDK 応答の扱い | cargo test、aws-smithy-mocks | CI（Linux） |
 | Rust 結合 | S3 操作の一連の流れ、SQLite | cargo test、moto | CI（Linux） |
 | フロントエンド単体・コンポーネント | 書式、状態管理、コンポーネント | Vitest 5、Testing Library、`@tauri-apps/api/mocks` | CI（Linux） |
-| 画面テスト | モックバックエンドでの画面操作 | Playwright | CI（Linux） |
-| ビジュアル回帰 | 主要画面のライト／ダーク | Playwright のスクリーンショット比較 | CI（Linux） |
+| 画面テスト | モックバックエンドでの画面操作 | Playwright（WebKit） | CI（Linux。Playwright の公式イメージ） |
+| ビジュアル回帰 | 主要画面のライト／ダーク | Playwright のスクリーンショット比較 | CI（Linux。Playwright の公式イメージ） |
+| ベンチマーク | 100 万件の検索 | criterion | 手元（§5） |
 | E2E | 実アプリでの主要な流れ | WebdriverIO + `@wdio/tauri-service` | 毎晩（macOS） |
 | 手動 | ネイティブの見た目・実 AWS・実 Google・配布物 | チェックリスト | リリース前 |
 
@@ -26,9 +27,9 @@
 | `transfer::multipart` | パートサイズの計算（8 MiB、10,000 パートを超える場合、50 TB） |
 | `objects` | 移動先のキーの計算、自身の配下への移動の禁止、コピー時のストレージクラス・メタデータの指定 |
 | `metrics` | StorageType からクラスへの集計、使用タイプの分類、当月・前月同期間の期間計算（月末の違い、UTC） |
-| `auth` | state・nonce の照合、ID トークンのクレーム検証（テスト用の鍵）、許可リスト |
+| `auth` | state・nonce の照合、ID トークンのクレーム検証（テスト用の HS256 の鍵で署名したトークン。`aud`・`iss`・`nonce`・`exp` の猶予・`email_verified`）、許可リスト |
 | `aws::classify_sdk_error` | AWS のエラーから `AppError` への変換（[05 §5](05-backend-ipc.md#5-エラーコード)） |
-| SDK 応答の扱い（aws-smithy-mocks） | `ListObjectsV2` のページング、`ListObjectVersions` のキー完全一致の絞り込み、`DeleteObjects` の一部失敗、`HeadBucket` の 301 によるリージョン補正、Cost Explorer・CloudWatch・Price List の応答 |
+| SDK 応答の扱い（aws-smithy-mocks） | `ListObjectsV2` のページングとキーの復元、`DeleteObjects` の一部失敗、`HeadBucket` の 301 によるリージョン補正、`ExpiredToken` での認証情報の取り直しと 1 回だけの再試行、アップロードの `AccessDenied` でのジョブの停止、ダウンロード中の置き換え（412）での 1 回のやり直し、保存先の外を指すキーの除外、5 GB を超えるマルチパートコピー、Cost Explorer・CloudWatch・Price List の応答。`ListObjectVersions` のキー完全一致の絞り込みは結合テスト（§2.2）で確認する |
 
 ### 2.2 Rust 結合テスト（moto）
 
@@ -48,11 +49,12 @@
 | バージョン | 一覧、以前のバージョンの復元、バージョンの削除、削除マーカーの除去による復元 |
 | 検索 | インデックスの作成、世代による削除の反映、各フィルタ、操作後の即時反映 |
 
-CloudWatch の S3 日次メトリクス、Cost Explorer、Price List は moto では再現できないため、aws-smithy-mocks による単体テストで確認する。
+CloudWatch の S3 日次メトリクス、Cost Explorer、Price List は moto では再現できないため、aws-smithy-mocks による単体テストで確認する。ダウンロード中の置き換え（`If-Match`）は moto では時機を合わせられないため、同じく単体テストで確認する（§2.1）。
 
 ### 2.3 フロントエンド単体・コンポーネントテスト
 
-- Vitest 5 と Testing Library（jsdom）で実行する。グローバル API は使わず、`vitest` から明示的にインポートする（TypeScript 7 の `types` の既定が空になったため。[01 §8.3](01-architecture.md#83-typescript-7-の設定)）。IPC は `@tauri-apps/api/mocks` の `mockIPC` で置き換え、テストごとに `clearMocks` する。
+- Vitest 5 と Testing Library（jsdom）で実行する。グローバル API は使わず、`vitest` から明示的にインポートする（TypeScript 7 の `types` の既定が空になったため。[01 §8.3](01-architecture.md#83-typescript-7-の設定)）。IPC は `@tauri-apps/api/mocks` の `mockIPC` でモックバックエンド（§2.4）に置き換え、テストごとに `clearMocks` する。
+- 画面の描画と共通の準備は `src/test/harness.tsx` にまとめる。失敗・読み込み中の表示は、モックの `failNext`・`holdNext` で再現する。
 
 | 対象 | 主な確認内容 |
 |---|---|
@@ -66,7 +68,8 @@ CloudWatch の S3 日次メトリクス、Cost Explorer、Price List は moto �
 
 - `src/lib/ipc/mock/` に IPC コマンドのメモリ実装を用意する。データは DS のモックデータ（`DS: ui_kits/s3-drive/data.js`: 2 つのバケット、バージョン、コスト）に合わせる。
 - `pnpm dev:mock` で、Tauri なしにブラウザで画面を動かせるようにする（UI の開発にも使う）。
-- Playwright（WebKit）で、フォルダの移動、選択、コンテキストメニュー、ダイアログ、キーボードショートカット、ウィンドウ幅の切り替え（1,100px／900px）を確認する。
+- Playwright（WebKit）で、フォルダの移動、選択、コンテキストメニュー、ダイアログ、キーボードショートカット、ウィンドウ幅の切り替え（1,100px／900px）を確認する（`tests/ui/screens.spec.ts`）。
+- 開発サーバーは Playwright が起動する（`playwright.config.ts` の `webServer`）。日時の表示を安定させるため、ブラウザの時計を DS の基準日時（2026/09/27 14:40）に固定する。
 
 ### 2.5 E2E テスト
 
@@ -86,7 +89,8 @@ CloudWatch の S3 日次メトリクス、Cost Explorer、Price List は moto �
 
 ### 2.6 ビジュアル回帰テスト
 
-- モックバックエンドで主要な画面（SCR-01〜03、各ダイアログ、コンテキストメニュー）を表示し、ライトとダークの両方でスクリーンショットを比較する（Playwright の `colorScheme`）。
+- モックバックエンドで主要な画面（SCR-01〜03、各ダイアログ、コンテキストメニュー）を表示し、ライトとダークの両方でスクリーンショットを比較する（Playwright の `colorScheme`。`tests/ui/visual.spec.ts`）。
+- 比較はフォントなどの描画環境に依存するため、基準画像（`tests/ui/__screenshots__/`）は CI と同じ Playwright の公式イメージ（Linux、`@playwright/test` と同じ版）で作り、CI もそのイメージで比べる。作り直す手順は docs/ope/03-test.md に記載する。
 - DS の更新を取り込むとき（[02 §2](02-ui-foundation.md#2-取り込みと同期の方針)）は差分を確認してから基準画像を更新する。
 
 ### 2.7 手動テスト
@@ -148,7 +152,7 @@ services:
 | 観点 | 方法 | 目標（[README §8](README.md#8-非機能要件)） |
 |---|---|---|
 | 一覧の描画 | 10 万件のモックデータで Playwright のパフォーマンス計測 | スクロールが滑らか |
-| 検索 | `s3drive-core` のベンチマーク（criterion）で 100 万件 | 300 ms 以内 |
+| 検索 | `s3drive-core` のベンチマーク（criterion。`cargo bench -p s3drive-core --features bench --bench search`）で 100 万件。名前（3 文字以上・2 文字以下）、名前と拡張子、種類・サイズ・期間、ストレージクラスで測る | 300 ms 以内 |
 | 起動時間 | サインイン済み・キャッシュありで計測 | 2 秒以内 |
 | 転送 | 実 S3 で 10 GB を転送し、速度とメモリ使用量を計測 | 帯域を使い切る、メモリが増え続けない |
 

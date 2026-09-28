@@ -90,7 +90,7 @@ CREATE TABLE restore_requests (
   version_id    TEXT NOT NULL DEFAULT '',
   tier          TEXT NOT NULL,
   days          INTEGER,
-  status        TEXT NOT NULL,                  -- inProgress / restored
+  status        TEXT NOT NULL,                  -- inProgress / restored / abandoned
   requested_at  TEXT NOT NULL,
   expiry_at     TEXT,
   PRIMARY KEY (connection_id, key, version_id)

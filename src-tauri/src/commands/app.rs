@@ -40,7 +40,8 @@ pub fn settings_update(
     state: State<'_, AppState>,
     patch: serde_json::Value,
 ) -> CmdResult<Settings> {
-    let settings = ipc(state.core.settings_store().patch(patch))?;
+    // ダウンロード先などのパスはフロントエンドから受け取らない（05 §3.9）
+    let settings = ipc(state.core.settings_store().patch_from_ipc(patch))?;
     apply_settings(&app, &settings);
     Ok(settings)
 }
@@ -73,10 +74,7 @@ pub async fn app_choose_download_dir(
     let Some(path) = picked.and_then(|p| p.into_path().ok()) else {
         return Ok(state.core.settings_store().settings());
     };
-    let settings = ipc(state
-        .core
-        .settings_store()
-        .patch(serde_json::json!({ "general": { "downloadDir": path.display().to_string() } })))?;
+    let settings = ipc(state.core.settings_store().set_download_dir(&path))?;
     apply_settings(&app, &settings);
     Ok(settings)
 }

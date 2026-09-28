@@ -215,8 +215,15 @@ export const metrics = {
   pricing: (region: string) => call<PriceTable>('pricing_get', { region }),
 };
 
-/** 設定の部分更新。 */
-export type SettingsPatch = { [K in keyof Settings]?: Partial<Settings[K]> };
+/**
+ * 設定の部分更新。ダウンロード先はパスを渡さず `chooseDownloadDir` で変更する（05 §3.9）ため、
+ * `general.downloadDir` は含めない（Rust 側でも無視する）。
+ */
+export type SettingsPatch = {
+  [K in keyof Settings]?: K extends 'general'
+    ? Partial<Omit<Settings['general'], 'downloadDir'>>
+    : Partial<Settings[K]>;
+};
 
 export const app = {
   settings: () => call<Settings>('settings_get'),

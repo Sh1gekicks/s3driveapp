@@ -31,33 +31,41 @@ impl<E: serde::Serialize + Clone + Send + Sync + 'static> ProgressSink<E> for Ch
 |---|---|---|
 | `model` | `UserSession`、`Connection`、`Entry`、`ObjectDetail`、`ObjectVersion`、`StorageClass`、`RestoreState`、`BucketInfo`、`TransferJob`、`SearchQuery`、`StorageMetrics`、`CostSummary` | IPC で受け渡す DTO（serde + ts-rs） |
 | `auth` | `GoogleAuth::{sign_in, restore, sign_out}`、`LoopbackServer` | Google の OAuth（[07 §2](07-security.md#2-google-認証oauth-20--pkce)） |
-| `credentials` | `KeychainStore`、`CredentialsProviderFactory` | シークレットの保存と、静的キー／AssumeRole の認証情報プロバイダ |
-| `aws` | `ClientFactory`、`ClientCache`、`classify_sdk_error()` | 接続ごとの SDK クライアントとエラー分類 |
-| `objects` | `ObjectService::{list_page, head, create_folder, folder_summary, folder_children, delete, move_objects, rename, change_storage_class, request_restore}` | オブジェクト・フォルダ操作 |
+| `credentials` | `AccessKey`、`AssumeRoleCredentials`、`ExpiredTokenRetry` | キーチェーンに保存する値と、静的キー／AssumeRole の認証情報プロバイダ、`ExpiredToken` の再試行（[01 §7.1](01-architecture.md#71-エラーハンドリング)） |
+| `aws` | `sdk_config()`、`Clients`、`error_map::classify()` | SDK の設定と接続ごとのクライアント群、エラー分類 |
+| `connections` | `ConnectionService::{list, test, create, update, patch, delete, reorder, credential_list, credential_update, bucket_info}`、`ConnCtx` | 接続・認証情報の管理。接続ごとのクライアントとバケット情報を `ConnCtx` にまとめ、`Core` が接続 ID ごとにキャッシュする |
+| `objects` | `ObjectService::{list_page, head, create_folder, folder_summary, folder_children, find_conflicts, delete, move_objects, rename, change_storage_class, request_restore, check_restores}` | オブジェクト・フォルダ操作 |
 | `versions` | `VersionService::{list, restore, delete, undelete}` | バージョン管理 |
-| `transfer` | `TransferManager::{prepare_upload, start_upload, start_download, subscribe}`、`multipart`、`ProgressThrottle` | 転送キューと実行 |
-| `search` | `Indexer::{build, apply_change}`、`SearchService::{query, status}` | 検索インデックス |
+| `transfer` | `Core::{upload_prepare, upload_start, download_start, transfer_retry, abort_stale_uploads}`、`TransferManager::{subscribe, enqueue, cancel, shutdown}`、`multipart` | 転送キューと実行 |
+| `search` | `IndexRunner`（全件走査）、`upsert`／`remove`（アプリ自身の変更の反映）、`SearchService::{query, status, rebuild, delete}` | 検索インデックス |
 | `metrics` | `StorageMetricsService`（CloudWatch）、`CostService`（Cost Explorer）、`PricingService` | 容量・コスト・単価 |
 | `jobs` | `JobRegistry`、`JobHandle`、`JobId` | ジョブの登録・キャンセル |
 | `selection` | `SelectionRegistry` | ファイル選択・ドロップで得たローカルパスの保管（§3.9） |
-| `store` | `Db`（コネクションプール）、`migrations`、各リポジトリ、`SettingsStore` | 永続化（[06-data.md](06-data.md)） |
-| `util` | `key`（正規化・検証・結合）、`size`、`time`、`region`（リージョン名） | 共通処理 |
+| `store` | `Db`（コネクションプール）、`migrations.sql`、`SettingsStore`、`SecretStore`（`KeyringSecretStore`／テスト用の `MemorySecretStore`）、`metrics_cache` | 永続化（[06-data.md](06-data.md)） |
+| `util` | `key`（正規化・検証・結合）、`time`、`region`（リージョン名）、`natural_cmp`（自然順の比較） | 共通処理 |
 
 ### 1.3 アプリの状態
 
 ```rust
 pub struct AppState {
-    pub core: Arc<s3drive_core::Core>, // サービス群のファサード
+    pub core: s3drive_core::Core, // サービス群のファサード
+    pub quitting: AtomicBool,     // 終了の確認を済ませた
 }
 
-pub struct Core {
+#[derive(Clone)]
+pub struct Core(Arc<CoreInner>); // 複製しても同じ状態を共有する
+
+struct CoreInner {
     session: RwLock<Option<UserSession>>,
-    clients: ClientCache,
+    clients: Mutex<HashMap<ConnectionId, Arc<ConnCtx>>>, // 接続ごとのクライアント
     jobs: JobRegistry,
     selections: SelectionRegistry,
+    transfers: TransferManager,
     db: Db,
     settings: SettingsStore,
-    // 各サービスは上記を Arc で共有する
+    secrets: Arc<dyn SecretStore>,
+    auth: Arc<dyn AuthProvider>, // Google、または E2E・開発用の固定のセッション
+    // ほかにインデックスの走査状態、サインインのキャンセルなど
 }
 ```
 
@@ -110,7 +118,10 @@ interface ConnectionTestResult {
   region: string; regionCorrected: boolean; versioning: Versioning;
 }
 
-interface BucketInfo { bucket: string; region: string; versioning: Versioning; encryption: string }
+interface BucketInfo {
+  bucket: string; region: string; versioning: Versioning; encryption: string;
+  regionCorrected: boolean;     // HeadBucket で接続のリージョンを修正した（01 §6.1）
+}
 
 type RestoreState =
   | { state: 'notArchived' }
@@ -142,7 +153,7 @@ interface ObjectVersion {
 interface Target { key: string; isFolder: boolean; versionId?: string }
 
 interface BatchResult {
-  succeeded: number;
+  succeeded: number;            // 項目（キー）の数。全バージョンの削除でもバージョンではなくキーで数える
   skipped: { key: string; reason: string }[];
   failed: { key: string; error: AppError }[];
 }
@@ -155,6 +166,7 @@ interface Selection { selectionId: string; items: { name: string; size: number; 
 
 interface UploadPlan {
   planId: string; fileCount: number; totalBytes: number;
+  versioningEnabled: boolean;   // DLG-08 の説明文
   conflicts: { key: string; localSize: number; remoteSize: number; remoteModified: Timestamp }[];
   excluded: { name: string; reason: 'symlink' | 'ignored' | 'keyTooLong' | 'invalidChar' | 'unreadable' }[];
 }
@@ -166,6 +178,7 @@ interface TransferJob {
   totalFiles: number; doneFiles: number; failedFiles: number;
   totalBytes: number; doneBytes: number; currentName: string | null;
   bytesPerSec: number; etaSec: number | null;
+  destination: string;          // 「{バケット}/{プレフィックス}」または保存先フォルダ
 }
 
 type TransferEvent =
@@ -183,7 +196,8 @@ interface IndexStatus {
   state: 'none' | 'building' | 'ready' | 'stale';
   objectCount: number; lastScanAt: Timestamp | null; sizeBytes: number; progress: number | null;
 }
-interface SearchResult { entries: (Entry & { parent: string })[]; total: number; index: IndexStatus }
+// フォルダは最初のページ（offset = 0）の先頭にだけ最大 200 件を含め、offset・limit はファイルに適用する（04 §10.2）
+interface SearchResult { entries: { entry: Entry; parent: string }[]; total: number; index: IndexStatus }
 
 interface StorageMetrics {
   source: 'cloudwatch' | 'index' | 'none'; asOf: Timestamp | null;
@@ -234,11 +248,14 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | `connection_test` | `input: ConnectionInput` | `ConnectionTestResult` | [04 §2.2](04-features.md#22-接続の確認) の確認 |
 | `connection_create` | `input` | `Connection` | 確認済みの入力を保存する |
 | `connection_update` | `id`、`input` | `Connection` | 再確認して保存する |
+| `connection_patch` | `id`、`patch: { costTag?, defaultStorageClass?, useSourceIdentity? }` | `Connection` | 接続ごとの設定（コスト配分タグなど。確認は不要） |
 | `connection_delete` | `id` | — | 接続と関連データを削除する |
 | `connection_reorder` | `ids: ConnectionId[]` | — | サイドバーの順序 |
+| `connection_last_location` | — | `{ connectionId, prefix } \| null` | 前回表示していた場所（起動時に復元する。03 §2） |
+| `connection_set_location` | `location` | — | 表示中の場所を保存する |
 | `credential_list` | — | `{ id, accessKeyIdMasked, usedBy: string[] }[]` | DLG-05 の既存の認証情報 |
 | `credential_update` | `credentialId`、`accessKeyId`、`secretAccessKey` | — | 確認してキーチェーンを更新する |
-| `bucket_get_info` | `connectionId` | `BucketInfo` | リージョン・バージョニング・暗号化 |
+| `bucket_get_info` | `connectionId`、`force?` | `BucketInfo` | リージョン・バージョニング・暗号化。リージョンが違えば修正し、`connections://changed` を送る（[01 §6.1](01-architecture.md#61-aws-クライアントの管理)） |
 
 ### 3.3 オブジェクト・フォルダ
 
@@ -303,9 +320,12 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | コマンド | 引数 | 戻り値 | 処理 |
 |---|---|---|---|
 | `settings_get` | — | `Settings` | |
-| `settings_update` | `patch: Partial<Settings>` | `Settings` | 保存し、`settings://changed` を全ウィンドウに送る |
+| `settings_update` | `patch: Partial<Settings>` | `Settings` | 保存し、`settings://changed` を全ウィンドウに送る。ダウンロード先（`general.downloadDir`）は §3.9 のため受け取らず、無視する |
+| `app_choose_download_dir` | — | `Settings` | Rust 側でフォルダ選択ダイアログを開き、選んだフォルダをダウンロード先に保存する |
 | `app_set_theme` | `theme: 'auto' \| 'light' \| 'dark'` | — | 全ウィンドウの外観を切り替える（[02 §7.2](02-ui-foundation.md#72-ダークライトモードへの追従req-d04)） |
 | `app_open_settings` | — | — | 設定ウィンドウを開く（開いていれば前面に出す） |
+| `app_startup_info` | — | `{ session, dbRecreated, version }` | 起動時に一度だけ知らせること（SQLite の作り直しなど） |
+| `app_notify` | `title`、`body` | — | ウィンドウが前面にないときだけ macOS の通知を出す（設定「完了時に通知する」に従う） |
 | `menu_update_state` | `state: MenuState` | — | メニュー項目の有効・無効を更新する |
 | `app_open_logs` | — | — | ログフォルダを Finder で開く |
 | `app_clear_cache` | — | — | メトリクス・コストなどのキャッシュを削除する |
@@ -314,7 +334,7 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 
 ### 3.9 ローカルパスの受け渡し
 
-アップロード元とダウンロード先のローカルパスは、フロントエンドから文字列で受け取らない。Rust 側がファイル選択ダイアログ（`pick_upload_files`、`pick_download_dir`）とウィンドウのドラッグ＆ドロップイベントで得たパスを `SelectionRegistry` に保管し、フロントエンドには ID（`selectionId`）と表示用の名前・サイズだけを渡す。選択は 10 分で失効する。これにより、万一フロントエンドが不正なスクリプトに乗っ取られても、ユーザーが選んでいないファイルを読み出したり、任意の場所に書き込んだりできない（[07 §5](07-security.md#5-tauri-のセキュリティ設定)）。
+アップロード元とダウンロード先のローカルパスは、フロントエンドから文字列で受け取らない（既定のダウンロード先も、`settings_update` では変更できず、Rust 側のフォルダ選択 `app_choose_download_dir` でだけ変更する）。また、S3 のキーの階層（`..` など）で保存先の外に書き込まないよう、ダウンロードでは空・`.`・`..` の階層を含む項目を保存しない（[04 §5.3](04-features.md#53-フォルダ複数選択)）。Rust 側がファイル選択ダイアログ（`pick_upload_files`、`pick_download_dir`）とウィンドウのドラッグ＆ドロップイベントで得たパスを `SelectionRegistry` に保管し、フロントエンドには ID（`selectionId`）と表示用の名前・サイズだけを渡す。選択は 10 分で失効する。これにより、万一フロントエンドが不正なスクリプトに乗っ取られても、ユーザーが選んでいないファイルを読み出したり、任意の場所に書き込んだりできない（[07 §5](07-security.md#5-tauri-のセキュリティ設定)）。
 
 ## 4. イベントとチャネル
 
@@ -339,6 +359,7 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | `dragdrop://drop` | `{ selectionId, position, names }` | ドロップされた（パスは `SelectionRegistry` に保管済み） |
 | `restore://completed` | `{ connectionId, key }` | アーカイブの取り出し完了 |
 | `index://updated` | `{ connectionId, status: IndexStatus }` | 背景でのインデックス更新の完了 |
+| `update://available` | `{ version, notes }` | 自動確認で新しいバージョンが見つかった（[08 §7](08-cicd.md#7-自動更新)） |
 
 ## 5. エラーコード
 
@@ -358,7 +379,7 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | `ACCESS_DENIED` | 操作の権限がない | この操作を行う権限がありません（{IAM アクション}） | × | トースト |
 | `NOT_FOUND` | 対象がない | 項目が見つかりません。ほかの操作で削除された可能性があります | × | 一覧を更新 |
 | `ALREADY_EXISTS` | 同名の項目がある | 同じ名前の項目があります | × | 入力欄に表示 |
-| `INVALID_NAME` | 名前が不正 | この名前は使用できません | × | 入力欄に表示 |
+| `INVALID_NAME` | 名前が不正（ダウンロードでは、保存先の外を指す名前） | この名前は使用できません | × | 入力欄に表示（ダウンロードでは失敗の一覧） |
 | `INVALID_OBJECT_STATE` | 取り出していないアーカイブ | 取り出しが必要です | × | DLG-07 |
 | `RESTORE_IN_PROGRESS` | 取り出し中 | 取り出し中です。完了したら通知します | × | — |
 | `EXPEDITED_UNAVAILABLE` | 迅速な取り出しが使えない | 迅速な取り出しは現在利用できません。標準を選んでください | × | DLG-07 |
@@ -418,7 +439,7 @@ pub struct ObjectVersion {
 ### 6.2 フロントエンドの呼び出し
 
 ```ts
-// src/lib/ipc/commands.ts
+// src/lib/ipc/index.ts（抜粋）
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { AppError, BatchEvent, ListPage, ObjectDetail, Target } from './bindings';
 
@@ -491,7 +512,7 @@ pub async fn objects_list_page(
 ## 8. Tauri の権限（capabilities）
 
 - `build.rs` の `AppManifest` にアプリのコマンドを列挙し、ウィンドウごとの capability で許可するコマンドを明示する。
-- メインウィンドウ（`capabilities/main.json`）は全コマンドと、ウィンドウ操作（ドラッグ開始、表示、フォーカス、テーマ）、イベント、クリップボードへの書き込み、通知を許可する。
+- メインウィンドウ（`capabilities/main.json`）は全コマンドと、ウィンドウ操作（ドラッグ開始、表示、フォーカス、フォーカスの確認）、イベント、ログ、クリップボードへの書き込みを許可する。通知と外観の切り替えは、プラグインの権限を与えずにコマンド（`app_notify`、`app_set_theme`）で Rust 側から行う。
 - 設定ウィンドウ（`capabilities/settings.json`）は `settings_*`、`connection_*`、`credential_*`、`search_index_*`、`app_*` のみを許可する。
 - ファイル選択・Finder での表示・URL を開く処理は Rust 側で行うため、フロントエンドに dialog／opener／fs の権限は与えない。
 

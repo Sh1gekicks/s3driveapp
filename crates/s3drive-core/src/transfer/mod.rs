@@ -10,7 +10,7 @@ mod upload;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, Instant};
 
@@ -18,7 +18,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::connections::ConnCtx;
-use crate::error::{CoreError, CoreResult};
+use crate::error::{CoreError, CoreResult, ErrorCode};
 use crate::jobs::ProgressSink;
 use crate::model::{
     FileFailed, JobId, JobStatus, TransferEvent, TransferJob, TransferKind, TransferSettings,
@@ -67,6 +67,8 @@ pub(crate) struct JobState {
     pending: AtomicUsize,
     samples: Mutex<VecDeque<(Instant, u64)>>,
     failed: Mutex<Vec<FileWork>>,
+    /// 権限エラーでジョブ全体を止めた（04 §4.5）。残りのファイルも再試行の対象にし、状態は `failed` にする。
+    halted: AtomicBool,
     pub(crate) saved: Mutex<Vec<PathBuf>>,
     pub(crate) reserved_paths: Mutex<HashSet<PathBuf>>,
     last_emitted: AtomicU64,
@@ -323,6 +325,7 @@ impl TransferManager {
             pending: AtomicUsize::new(files.len()),
             samples: Mutex::new(VecDeque::new()),
             failed: Mutex::new(Vec::new()),
+            halted: AtomicBool::new(false),
             saved: Mutex::new(Vec::new()),
             reserved_paths: Mutex::new(HashSet::new()),
             last_emitted: AtomicU64::new(u64::MAX),
@@ -422,7 +425,12 @@ fn file_finished(
             job.finished_bytes.fetch_add(work.size(), Ordering::Relaxed);
             job.update(|j| j.done_files += 1);
         }
-        Err(e) if e.is_canceled() => {}
+        Err(e) if e.is_canceled() => {
+            // 権限エラーで止めたジョブの残りは、再試行で送り直せるようにする
+            if job.halted.load(Ordering::Relaxed) {
+                job.failed.lock().unwrap().push(work.clone());
+            }
+        }
         Err(e) => {
             job.update(|j| j.failed_files += 1);
             job.failed.lock().unwrap().push(work.clone());
@@ -435,12 +443,18 @@ fn file_finished(
                 }),
             );
             log::warn!("転送に失敗しました: {e}");
+            if halts_job(work, e) && !job.halted.swap(true, Ordering::Relaxed) {
+                // 権限の問題は他のファイルでも起こるため、ジョブ全体を止める（04 §4.5）
+                job.cancel.cancel();
+            }
         }
     }
     if job.pending.fetch_sub(1, Ordering::Relaxed) == 1 {
         job.update(|j| {
             j.current_name = None;
-            j.status = if job.cancel.is_cancelled() {
+            j.status = if job.halted.load(Ordering::Relaxed) {
+                JobStatus::Failed
+            } else if job.cancel.is_cancelled() {
                 JobStatus::Canceled
             } else if j.failed_files > 0 && j.failed_files == j.total_files {
                 JobStatus::Failed
@@ -451,6 +465,11 @@ fn file_finished(
         });
     }
     emit(shared, TransferEvent::JobUpdated(job.snapshot()));
+}
+
+/// このファイルの失敗でジョブ全体を止めるか。アップロードの権限エラーは他のファイルでも起こるため止める（04 §4.5）。
+fn halts_job(work: &FileWork, error: &CoreError) -> bool {
+    matches!(work, FileWork::Upload(_)) && error.code == ErrorCode::AccessDenied
 }
 
 /// 実行中のジョブの進捗を 100 ms ごとに送る（変化があった場合のみ）。
@@ -505,9 +524,79 @@ where
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// ジョブが終わるまで待つ。
+    pub async fn wait(manager: &TransferManager, job_id: &str) -> TransferJob {
+        for _ in 0..500 {
+            if let Some(job) = manager.job_snapshot(job_id)
+                && job.status.is_finished()
+            {
+                return job;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("transfer {job_id} did not finish");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ErrorCode;
+    use aws_smithy_mocks::{RuleMode, mock, mock_client};
+    use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+    use aws_smithy_runtime_api::http::StatusCode;
+    use aws_smithy_types::body::SdkBody;
+
+    #[tokio::test]
+    async fn access_denied_stops_the_whole_upload() {
+        let put = mock!(aws_sdk_s3::Client::put_object).then_http_response(|| {
+            HttpResponse::new(
+                StatusCode::try_from(403).unwrap(),
+                SdkBody::from(
+                    "<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>",
+                ),
+            )
+        });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&put]);
+        let ctx = Arc::new(ConnCtx::for_tests("k1", "b", s3));
+        let dir = crate::store::db::tempfile_guard::TempDir::new().unwrap();
+        let files: Vec<FileWork> = (0..3)
+            .map(|i| {
+                let path = dir.path().join(format!("{i}.txt"));
+                std::fs::write(&path, b"data").unwrap();
+                FileWork::Upload(UploadFile {
+                    mtime: std::fs::metadata(&path).unwrap().modified().ok(),
+                    path,
+                    key: format!("up/{i}.txt"),
+                    size: 4,
+                    storage_class: crate::model::StorageClass::Standard,
+                    replaces: false,
+                    is_marker: false,
+                })
+            })
+            .collect();
+        let (db, _db_dir) = Db::open_temp().unwrap();
+        let manager = TransferManager::new(db);
+        manager.set_max_files(1);
+        let id = manager.enqueue(
+            ctx,
+            TransferKind::Upload,
+            "3 件をアップロード中".into(),
+            "b/up/".into(),
+            TransferSettings::default(),
+            files,
+        );
+        let job = test_support::wait(&manager, &id).await;
+        // 権限の問題は他のファイルでも起こるため、最初の失敗でジョブ全体を止める（04 §4.5）
+        assert_eq!(job.status, JobStatus::Failed);
+        assert_eq!(put.num_calls(), 1);
+        assert_eq!((job.done_files, job.failed_files), (0, 1));
+        // 送らなかったファイルも再試行の対象にする
+        let (_, retry) = manager.retry_files(&id).unwrap();
+        assert_eq!(retry.len(), 3);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn retries_retryable_errors_up_to_five_times() {

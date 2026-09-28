@@ -31,12 +31,36 @@ pub struct DownloadFile {
     /// 保存する名前（同名のファイルがあれば実行時に連番を付ける）。
     pub file_name: String,
     pub is_marker: bool,
+    /// 保存先の外を指す名前（`..` など）のため保存しない。実行すると `INVALID_NAME` で失敗にする。
+    pub rejected: bool,
 }
 
 impl DownloadFile {
     pub(crate) fn display_name(&self) -> String {
         self.file_name.clone()
     }
+
+    /// 保存先の外を指す名前のため保存しない項目（失敗の一覧に表示する）。
+    fn rejected(key: &str, version_id: Option<String>) -> Self {
+        Self {
+            key: key.to_string(),
+            version_id,
+            size: 0,
+            etag: String::new(),
+            dir: PathBuf::new(),
+            file_name: key.to_string(),
+            is_marker: false,
+            rejected: true,
+        }
+    }
+}
+
+fn unsafe_name_error(key: &str) -> CoreError {
+    CoreError::with_message(
+        ErrorCode::InvalidName,
+        "保存先の外を指す名前のため、ダウンロードしませんでした",
+    )
+    .detail(key.to_string())
 }
 
 /// 既定のダウンロード先（`~/Downloads`）。
@@ -113,8 +137,16 @@ impl Core {
                 let (objects, _) = list_recursive(&ctx, &t.key, usize::MAX).await?;
                 for o in objects {
                     let rest = o.key.strip_prefix(t.key.as_str()).unwrap_or(&o.key);
+                    // キーの階層をそのまま連結すると `..` で保存先の外に書き込めるため、検査してから使う（05 §3.9）
+                    let segments = key::is_safe_local_name(&folder_name)
+                        .then(|| key::local_segments(rest))
+                        .flatten();
+                    let Some(segments) = segments else {
+                        files.push(DownloadFile::rejected(&o.key, None));
+                        continue;
+                    };
                     let rel: PathBuf = std::iter::once(folder_name.clone())
-                        .chain(rest.split('/').filter(|s| !s.is_empty()).map(key::nfc))
+                        .chain(segments)
                         .collect();
                     let is_marker = key::is_folder_key(&o.key);
                     let (sub_dir, name) = if is_marker {
@@ -135,14 +167,19 @@ impl Core {
                         dir: sub_dir,
                         file_name: name,
                         is_marker,
+                        rejected: false,
                     });
                 }
             } else {
+                let name = key::nfc(key::base_name(&t.key));
+                if !key::is_safe_local_name(&name) {
+                    files.push(DownloadFile::rejected(&t.key, t.version_id.clone()));
+                    continue;
+                }
                 let info = head(&ctx, &t.key, t.version_id.as_deref()).await?;
                 if info.restore.needs_restore() {
                     return Err(CoreError::new(ErrorCode::InvalidObjectState).detail(t.key.clone()));
                 }
-                let name = key::nfc(key::base_name(&t.key));
                 files.push(DownloadFile {
                     key: t.key.clone(),
                     version_id: t.version_id.clone(),
@@ -155,6 +192,7 @@ impl Core {
                         name
                     },
                     is_marker: false,
+                    rejected: false,
                 });
             }
         }
@@ -211,6 +249,9 @@ pub(super) async fn run(
     file: &DownloadFile,
     counter: Arc<AtomicU64>,
 ) -> CoreResult<()> {
+    if file.rejected {
+        return Err(unsafe_name_error(&file.key));
+    }
     if file.is_marker {
         return tokio::fs::create_dir_all(&file.dir)
             .await
@@ -423,6 +464,145 @@ async fn download_to(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connections::ConnCtx;
+    use crate::jobs::MemorySink;
+    use crate::model::{JobStatus, TransferEvent, TransferSettings};
+    use crate::store::db::tempfile_guard::TempDir;
+    use crate::transfer::test_support::wait;
+    use aws_sdk_s3::operation::get_object::GetObjectOutput;
+    use aws_sdk_s3::operation::head_object::HeadObjectOutput;
+    use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
+    use aws_smithy_mocks::{RuleMode, mock, mock_client};
+    use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+    use aws_smithy_runtime_api::http::StatusCode;
+    use aws_smithy_types::body::SdkBody;
+    use aws_smithy_types::byte_stream::ByteStream;
+
+    fn object(key: &str, size: i64) -> aws_sdk_s3::types::Object {
+        aws_sdk_s3::types::Object::builder()
+            .key(key)
+            .size(size)
+            .e_tag("\"e\"")
+            .last_modified(aws_smithy_types::DateTime::from_secs(1_790_000_000))
+            .build()
+    }
+
+    #[tokio::test]
+    async fn never_writes_outside_the_destination() {
+        let list = mock!(aws_sdk_s3::Client::list_objects_v2).then_output(|| {
+            ListObjectsV2Output::builder()
+                .contents(object("docs/ok.txt", 2))
+                // S3 のキーには .. も使える。そのまま連結すると保存先の外に書き込める（05 §3.9）
+                .contents(object("docs/../../evil.txt", 4))
+                .contents(object("docs/./dot.txt", 4))
+                .build()
+        });
+        let get = mock!(aws_sdk_s3::Client::get_object)
+            .match_requests(|r| r.key() == Some("docs/ok.txt"))
+            .then_output(|| {
+                GetObjectOutput::builder()
+                    .body(ByteStream::from_static(b"ok"))
+                    .build()
+            });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&list, &get]);
+        let (core, _dir) = Core::for_tests(None).unwrap();
+        core.with_test_connection(ConnCtx::for_tests("k1", "b", s3))
+            .await;
+        let events = Arc::new(MemorySink::<TransferEvent>::default());
+        core.transfers().subscribe(events.clone());
+
+        let root = TempDir::new().unwrap();
+        let dest = root.path().join("a").join("Downloads");
+        std::fs::create_dir_all(&dest).unwrap();
+        let sel = core.selections().register(vec![dest.clone()]);
+        let id = core
+            .download_start(
+                "k1",
+                vec![Target::folder("docs/")],
+                DownloadDestination::Selection {
+                    selection_id: sel.selection_id,
+                },
+            )
+            .await
+            .unwrap();
+        let job = wait(core.transfers(), &id).await;
+        assert_eq!(job.status, JobStatus::Succeeded);
+        assert_eq!((job.done_files, job.failed_files), (1, 2));
+        assert_eq!(std::fs::read(dest.join("docs/ok.txt")).unwrap(), b"ok");
+        assert!(!root.path().join("evil.txt").exists());
+        assert!(!root.path().join("a/evil.txt").exists());
+        assert_eq!(get.num_calls(), 1);
+        let failed: Vec<_> = events
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                TransferEvent::FileFailed(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(failed.len(), 2);
+        assert!(
+            failed
+                .iter()
+                .all(|f| f.error.code == ErrorCode::InvalidName)
+        );
+    }
+
+    #[tokio::test]
+    async fn restarts_once_when_the_object_is_replaced() {
+        // 途中で置き換わると If-Match で 412 が返るため、HeadObject で取り直して最初からやり直す（04 §5.4）
+        let stale = mock!(aws_sdk_s3::Client::get_object)
+            .match_requests(|r| r.if_match() == Some("\"old\""))
+            .then_http_response(|| {
+                HttpResponse::new(
+                    StatusCode::try_from(412).unwrap(),
+                    SdkBody::from("<Error><Code>PreconditionFailed</Code></Error>"),
+                )
+            });
+        let head = mock!(aws_sdk_s3::Client::head_object).then_output(|| {
+            HeadObjectOutput::builder()
+                .e_tag("\"new\"")
+                .content_length(5)
+                .last_modified(aws_smithy_types::DateTime::from_secs(1_790_000_000))
+                .build()
+        });
+        let fresh = mock!(aws_sdk_s3::Client::get_object)
+            .match_requests(|r| r.if_match() == Some("\"new\""))
+            .then_output(|| {
+                GetObjectOutput::builder()
+                    .body(ByteStream::from_static(b"fresh"))
+                    .build()
+            });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::Sequential, [&stale, &head, &fresh]);
+        let ctx = Arc::new(ConnCtx::for_tests("k1", "b", s3));
+        let dir = TempDir::new().unwrap();
+        let (db, _db_dir) = crate::store::Db::open_temp().unwrap();
+        let manager = crate::transfer::TransferManager::new(db);
+        let id = manager.enqueue(
+            ctx,
+            TransferKind::Download,
+            "「a.txt」をダウンロード中".into(),
+            "~/Downloads".into(),
+            TransferSettings::default(),
+            vec![FileWork::Download(DownloadFile {
+                key: "a.txt".into(),
+                version_id: None,
+                size: 3,
+                etag: "old".into(),
+                dir: dir.path().to_path_buf(),
+                file_name: "a.txt".into(),
+                is_marker: false,
+                rejected: false,
+            })],
+        );
+        let job = wait(&manager, &id).await;
+        assert_eq!(job.status, JobStatus::Succeeded, "{job:?}");
+        assert_eq!(std::fs::read(dir.path().join("a.txt")).unwrap(), b"fresh");
+        assert_eq!(
+            (stale.num_calls(), head.num_calls(), fresh.num_calls()),
+            (1, 1, 1)
+        );
+    }
 
     #[test]
     fn names_version_downloads() {

@@ -29,9 +29,13 @@ export function AppShell({ sidebar, toolbar, inspector, overlayInspector, childr
         <div className="relative flex min-h-0 flex-1 flex-col">
           {children}
           {overlayInspector ? (
-            <div className="absolute top-0 right-0 bottom-0 z-5 w-[min(300px,85%)] overflow-auto bg-background elevation-md hairline-l">
+            // 重ねて表示する場合も、VoiceOver から同じランドマークとしてたどれるようにする
+            <aside
+              aria-label="インスペクタ"
+              className="absolute top-0 right-0 bottom-0 z-5 w-[min(300px,85%)] overflow-auto bg-background elevation-md hairline-l"
+            >
               {overlayInspector}
-            </div>
+            </aside>
           ) : null}
         </div>
       </main>

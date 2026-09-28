@@ -21,6 +21,11 @@
       "description": "npm パッケージと Rust クレートのマイナー版をそろえて更新する"
     },
     {
+      "groupName": "Playwright",
+      "matchPackageNames": ["@playwright/test", "mcr.microsoft.com/playwright"],
+      "description": "画面テスト（09 §2.4）。npm パッケージと CI のコンテナイメージの版をそろえる。更新したら基準画像を作り直す（docs/ope/03-test.md）"
+    },
+    {
       "groupName": "WebdriverIO",
       "matchPackageNames": ["webdriverio", "/^@wdio\\//"],
       "description": "E2E（09 §2.5）。@wdio/tauri-service は版を固定しており、E2E が通ることを確認してから取り込む"

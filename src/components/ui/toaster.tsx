@@ -103,6 +103,7 @@ function ToastList() {
           <Toast.Root
             key={t.id}
             toast={t}
+            data-tone={tone}
             className={cn(
               'material flex w-full items-start gap-2.5 rounded-xl p-3 text-popover-foreground elevation-md outline-none',
               'transition-[opacity,transform] duration-(--dur-base) ease-(--ease-out) data-ending-style:opacity-0 data-limited:hidden data-starting-style:translate-y-2 data-starting-style:opacity-0',

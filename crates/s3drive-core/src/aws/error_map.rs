@@ -242,6 +242,23 @@ fn cost_message(code: &str) -> String {
     }
 }
 
+/// 一時認証情報の期限切れ（`ExpiredToken`）の応答か。S3・CloudWatch（XML）と Cost Explorer・Price List（JSON）の
+/// どちらの形式でも判定できるよう、本文と `x-amzn-ErrorType` ヘッダーを見る（01 §7.1）。
+pub fn is_expired_token_response(
+    status: u16,
+    error_type: Option<&str>,
+    body: Option<&[u8]>,
+) -> bool {
+    if !(status == 400 || status == 403) {
+        return false;
+    }
+    const CODES: [&[u8]; 2] = [b"ExpiredToken", b"TokenRefreshRequired"];
+    let contains =
+        |haystack: &[u8], needle: &[u8]| haystack.windows(needle.len()).any(|w| w == needle);
+    error_type.is_some_and(|t| CODES.iter().any(|c| contains(t.as_bytes(), c)))
+        || body.is_some_and(|b| CODES.iter().any(|c| contains(b, c)))
+}
+
 /// HeadBucket などの 301 応答から正しいリージョンを取り出す（04 §2.2）。
 pub fn bucket_region_hint<E>(err: &SdkError<E, HttpResponse>) -> Option<String> {
     let raw = match err {
@@ -425,6 +442,25 @@ mod tests {
             classify_parts(c, Ctx::AssumeRole).code,
             ErrorCode::RoleAssumeDenied
         );
+    }
+
+    #[test]
+    fn detects_expired_token_responses() {
+        let s3 = b"<Error><Code>ExpiredToken</Code><Message>The provided token has expired.</Message></Error>";
+        assert!(is_expired_token_response(400, None, Some(s3)));
+        let ce = br#"{"__type":"com.amazon.coral.service#ExpiredTokenException","message":"x"}"#;
+        assert!(is_expired_token_response(400, None, Some(ce)));
+        assert!(is_expired_token_response(
+            403,
+            Some("ExpiredTokenException:http://internal.amazon.com/coral/"),
+            None
+        ));
+        assert!(!is_expired_token_response(
+            403,
+            None,
+            Some(b"<Error><Code>AccessDenied</Code></Error>")
+        ));
+        assert!(!is_expired_token_response(500, None, Some(s3)));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! バケット接続と認証情報の管理（04 §2）。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use aws_credential_types::provider::SharedCredentialsProvider;
@@ -9,7 +10,8 @@ use crate::Core;
 use crate::aws::error_map::{self, Ctx};
 use crate::aws::{self, Clients};
 use crate::credentials::{
-    self, AccessKey, AssumeRoleCredentials, AssumeRoleParams, load_access_key, save_access_key,
+    self, AccessKey, AssumeRoleCredentials, AssumeRoleParams, ExpiredTokenRetry, load_access_key,
+    save_access_key,
 };
 use crate::error::{CoreError, CoreResult, ErrorCode};
 use crate::model::{
@@ -31,6 +33,8 @@ pub struct ConnCtx {
     pub record: ConnectionRecord,
     pub clients: Clients,
     info: tokio::sync::Mutex<Option<(BucketInfo, Instant)>>,
+    /// HeadBucket でリージョンを確かめた（クライアントを作り直すまで 1 回だけ確かめる）。
+    region_checked: AtomicBool,
 }
 
 impl std::fmt::Debug for ConnCtx {
@@ -60,9 +64,26 @@ impl ConnCtx {
             region: self.region.clone(),
             versioning,
             encryption,
+            region_corrected: false,
         };
         *guard = Some((info.clone(), Instant::now()));
         Ok(info)
+    }
+
+    /// HeadBucket でバケットの実際のリージョンを確かめ、接続のリージョンと違えばそのリージョンを返す（01 §6.1）。
+    /// `force` でなければ、このクライアントで 1 回だけ確かめる。
+    async fn region_mismatch(&self, force: bool) -> Option<String> {
+        if !force && self.region_checked.swap(true, Ordering::Relaxed) {
+            return None;
+        }
+        match head_bucket_region(&self.clients.s3, &self.bucket, &self.region).await {
+            Ok(actual) => actual.filter(|r| r != &self.region),
+            Err(e) => {
+                // 権限などの問題は一覧の取得で表示されるため、ここでは続行する
+                log::debug!("HeadBucket に失敗: {e}");
+                None
+            }
+        }
     }
 
     pub async fn versioning(&self) -> Versioning {
@@ -70,6 +91,81 @@ impl ConnCtx {
             .await
             .map(|i| i.versioning)
             .unwrap_or(Versioning::Unknown)
+    }
+}
+
+/// HeadBucket を呼び、バケットのリージョンを返す（04 §2.2、01 §6.1）。
+///
+/// 別のリージョンのエンドポイントに送ると 301（または 400・403）と `x-amz-bucket-region` が返るため、
+/// そのリージョンを返す。応答にリージョンがなければ `None`。
+pub(crate) async fn head_bucket_region(
+    s3: &aws_sdk_s3::Client,
+    bucket: &str,
+    region: &str,
+) -> CoreResult<Option<String>> {
+    match s3.head_bucket().bucket(bucket).send().await {
+        Ok(out) => Ok(out.bucket_region().map(str::to_string)),
+        Err(e) => match error_map::bucket_region_hint(&e) {
+            Some(actual) if actual != region => Ok(Some(actual)),
+            _ => Err(error_map::classify(&e, Ctx::Bucket)),
+        },
+    }
+}
+
+#[cfg(test)]
+impl ConnCtx {
+    /// テスト用。S3 のクライアント（aws-smithy-mocks のモックなど）を使う接続を作る。
+    /// CloudWatch・Cost Explorer・Price List は呼ばない前提のダミー。
+    pub(crate) fn for_tests(id: &str, bucket: &str, s3: aws_sdk_s3::Client) -> Self {
+        let dummy = aws_config::SdkConfig::builder()
+            .behavior_version(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::from_static("us-east-1"))
+            .build();
+        Self {
+            id: id.to_string(),
+            bucket: bucket.to_string(),
+            region: "us-east-1".to_string(),
+            record: ConnectionRecord {
+                id: id.to_string(),
+                bucket: bucket.to_string(),
+                region: "us-east-1".to_string(),
+                credential_id: "test".to_string(),
+                role_arn: None,
+                external_id: None,
+                use_source_identity: false,
+                cost_tag: None,
+                default_storage_class: None,
+                endpoint_url: None,
+            },
+            clients: Clients {
+                s3: s3.clone(),
+                s3_transfer: s3.clone(),
+                s3_bulk: s3,
+                cloudwatch: aws_sdk_cloudwatch::Client::new(&dummy),
+                cost: aws_sdk_costexplorer::Client::new(&dummy),
+                pricing: aws_sdk_pricing::Client::new(&dummy),
+                full_checksums: false,
+            },
+            info: tokio::sync::Mutex::new(None),
+            region_checked: AtomicBool::new(true),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Core {
+    /// テスト用。サインインし、モックのクライアントを使う接続を登録する。
+    pub(crate) async fn with_test_connection(&self, ctx: ConnCtx) -> Arc<ConnCtx> {
+        if self.session().is_none() {
+            self.auth_sign_in(&|_| Ok(())).await.unwrap();
+        }
+        let ctx = Arc::new(ctx);
+        self.0
+            .clients
+            .lock()
+            .unwrap()
+            .insert(ctx.id.clone(), ctx.clone());
+        ctx
     }
 }
 
@@ -101,6 +197,17 @@ async fn fetch_encryption(s3: &aws_sdk_s3::Client, bucket: &str) -> String {
             .unwrap_or_else(|| "なし".to_string()),
         Err(_) => "不明".to_string(),
     }
+}
+
+/// ルートユーザーのアクセスキーは保存しない（07 §3.1）。`GetCallerIdentity` の ARN が `:root` で終わるかで判定する。
+fn reject_root_user(caller_arn: &str) -> CoreResult<()> {
+    if caller_arn.ends_with(":root") {
+        return Err(CoreError::with_message(
+            ErrorCode::CredentialsInvalid,
+            "ルートユーザーのアクセスキーは使用できません。IAM ユーザーを作成してください",
+        ));
+    }
+    Ok(())
 }
 
 /// 暗号化方式の表示（03 §5.6）。
@@ -169,15 +276,23 @@ impl Core {
     ) -> CoreResult<ConnCtx> {
         let key = load_access_key(self.0.secrets.as_ref(), &record.credential_id)?;
         let endpoint = self.endpoint_for(&record);
-        let provider = credentials_provider(account, &record, &key, endpoint.as_deref()).await;
-        let config = aws::sdk_config(&record.region, provider, endpoint.as_deref()).await;
+        let (provider, expired_retry) =
+            credentials_provider(account, &record, &key, endpoint.as_deref()).await;
+        let config = aws::sdk_config_with(
+            &record.region,
+            provider,
+            endpoint.as_deref(),
+            expired_retry.is_none(),
+        )
+        .await;
         Ok(ConnCtx {
             id: record.id.clone(),
             bucket: record.bucket.clone(),
             region: record.region.clone(),
-            clients: Clients::new(&config, endpoint.as_deref()),
+            clients: Clients::new(&config, endpoint.as_deref(), expired_retry),
             record,
             info: tokio::sync::Mutex::new(None),
+            region_checked: AtomicBool::new(false),
         })
     }
 
@@ -186,19 +301,20 @@ impl Core {
     }
 }
 
+/// 接続の認証情報プロバイダ。AssumeRole を使う場合は、`ExpiredToken` で取り直すための分類器も返す。
 async fn credentials_provider(
     account: &UserSession,
     record: &ConnectionRecord,
     key: &AccessKey,
     endpoint: Option<&str>,
-) -> SharedCredentialsProvider {
+) -> (SharedCredentialsProvider, Option<ExpiredTokenRetry>) {
     let static_provider = SharedCredentialsProvider::new(key.to_credentials());
     let Some(role_arn) = &record.role_arn else {
-        return static_provider;
+        return (static_provider, None);
     };
     let base = aws::sdk_config(&record.region, static_provider, endpoint).await;
     let sts = aws_sdk_sts::Client::new(&base);
-    SharedCredentialsProvider::new(AssumeRoleCredentials::new(
+    let role = AssumeRoleCredentials::new(
         sts,
         AssumeRoleParams {
             role_arn: role_arn.clone(),
@@ -207,7 +323,11 @@ async fn credentials_provider(
             source_identity: record.use_source_identity.then(|| account.email.clone()),
             duration: ROLE_SESSION_DURATION,
         },
-    ))
+    );
+    (
+        SharedCredentialsProvider::new(role.clone()),
+        Some(ExpiredTokenRetry::new(role)),
+    )
 }
 
 fn to_connection(record: &ConnectionRecord, credential: Option<&CredentialRecord>) -> Connection {
@@ -348,12 +468,7 @@ impl ConnectionService<'_> {
             .await
             .map_err(|e| error_map::classify(&e, Ctx::Caller))?;
         let caller_arn = caller.arn().unwrap_or_default().to_string();
-        if caller_arn.ends_with(":root") {
-            return Err(CoreError::with_message(
-                ErrorCode::CredentialsInvalid,
-                "ルートユーザーのアクセスキーは使用できません。IAM ユーザーを作成してください",
-            ));
-        }
+        reject_root_user(&caller_arn)?;
 
         let provider = match &role_arn {
             None => static_provider,
@@ -378,15 +493,10 @@ impl ConnectionService<'_> {
         let mut s3 = Clients::new(
             &aws::sdk_config(&region, provider.clone(), endpoint.as_deref()).await,
             endpoint.as_deref(),
+            None,
         )
         .s3;
-        let head = match s3.head_bucket().bucket(&bucket).send().await {
-            Ok(out) => Ok(out.bucket_region().map(str::to_string)),
-            Err(e) => match error_map::bucket_region_hint(&e) {
-                Some(actual) if actual != region => Ok(Some(actual)),
-                _ => Err(error_map::classify(&e, Ctx::Bucket)),
-            },
-        }?;
+        let head = head_bucket_region(&s3, &bucket, &region).await?;
         if let Some(actual) = head
             && !actual.is_empty()
             && actual != region
@@ -397,6 +507,7 @@ impl ConnectionService<'_> {
             s3 = Clients::new(
                 &aws::sdk_config(&region, provider.clone(), endpoint.as_deref()).await,
                 endpoint.as_deref(),
+                None,
             )
             .s3;
             s3.head_bucket()
@@ -666,12 +777,7 @@ impl ConnectionService<'_> {
             .send()
             .await
             .map_err(|e| error_map::classify(&e, Ctx::Caller))?;
-        if caller.arn().unwrap_or_default().ends_with(":root") {
-            return Err(CoreError::with_message(
-                ErrorCode::CredentialsInvalid,
-                "ルートユーザーのアクセスキーは使用できません。IAM ユーザーを作成してください",
-            ));
-        }
+        reject_root_user(caller.arn().unwrap_or_default())?;
         save_access_key(self.core.0.secrets.as_ref(), credential_id, &key)?;
         self.update_account(|account| {
             if let Some(c) = account
@@ -689,8 +795,40 @@ impl ConnectionService<'_> {
         Ok(())
     }
 
+    /// バケットの情報。HeadBucket で接続のリージョンが違うとわかった場合は、接続のリージョンを修正して
+    /// 取り直し、`region_corrected` を真にして返す（画面で知らせる。01 §6.1）。
     pub async fn bucket_info(&self, connection_id: &str, force: bool) -> CoreResult<BucketInfo> {
-        self.core.ctx(connection_id).await?.bucket_info(force).await
+        let ctx = self.core.ctx(connection_id).await?;
+        let Some(actual) = ctx.region_mismatch(force).await else {
+            return ctx.bucket_info(force).await;
+        };
+        log::info!(
+            "バケットのリージョンが {} ではなく {actual} のため、接続を修正します",
+            ctx.region
+        );
+        self.set_region(connection_id, &actual)?;
+        let ctx = self.core.ctx(connection_id).await?;
+        ctx.region_checked.store(true, Ordering::Relaxed);
+        let mut info = ctx.bucket_info(true).await?;
+        info.region_corrected = true;
+        Ok(info)
+    }
+
+    /// 接続のリージョンを修正し、そのリージョンでクライアントを作り直させる。
+    fn set_region(&self, connection_id: &str, region: &str) -> CoreResult<()> {
+        self.update_account(|account| {
+            let record = account
+                .connections
+                .iter_mut()
+                .find(|c| c.id == connection_id)
+                .ok_or_else(|| {
+                    CoreError::with_message(ErrorCode::NotFound, "接続が見つかりません")
+                })?;
+            record.region = region.to_string();
+            Ok(())
+        })?;
+        self.core.invalidate_clients(connection_id);
+        Ok(())
     }
 
     pub fn last_location(&self) -> CoreResult<Option<Location>> {
@@ -729,6 +867,101 @@ fn remove_unused_credential(account: &mut Account, credential_id: &str) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_smithy_mocks::{RuleMode, mock, mock_client};
+    use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+    use aws_smithy_runtime_api::http::StatusCode;
+    use aws_smithy_types::body::SdkBody;
+
+    fn http(status: u16, region: Option<&'static str>) -> HttpResponse {
+        let mut r = HttpResponse::new(StatusCode::try_from(status).unwrap(), SdkBody::empty());
+        if let Some(region) = region {
+            r.headers_mut().insert("x-amz-bucket-region", region);
+        }
+        r
+    }
+
+    async fn head(response: fn() -> HttpResponse) -> CoreResult<Option<String>> {
+        let rule = mock!(aws_sdk_s3::Client::head_bucket).then_http_response(response);
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&rule]);
+        head_bucket_region(&s3, "b", "ap-northeast-1").await
+    }
+
+    #[tokio::test]
+    async fn finds_the_bucket_region_from_head_bucket() {
+        // 別のリージョンのエンドポイントに送ると 301 と x-amz-bucket-region が返る（01 §6.1、04 §2.2）
+        assert_eq!(
+            head(|| http(301, Some("ap-northeast-3")))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("ap-northeast-3")
+        );
+        assert_eq!(
+            head(|| http(200, Some("ap-northeast-1")))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("ap-northeast-1")
+        );
+        // 同じリージョンの 403 はリージョン違いではなく権限の問題
+        assert_eq!(
+            head(|| http(403, Some("ap-northeast-1")))
+                .await
+                .unwrap_err()
+                .code,
+            ErrorCode::BucketAccessDenied
+        );
+        assert_eq!(
+            head(|| http(404, None)).await.unwrap_err().code,
+            ErrorCode::BucketNotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn corrects_the_connection_region() {
+        let (core, _dir) = Core::for_tests(None).unwrap();
+        let rule = mock!(aws_sdk_s3::Client::head_bucket)
+            .then_http_response(|| http(301, Some("ap-northeast-3")));
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&rule]);
+        let mut ctx = ConnCtx::for_tests("k1", "b", s3);
+        ctx.region = "ap-northeast-1".into();
+        ctx.region_checked = AtomicBool::new(false);
+        let record = ctx.record.clone();
+        let ctx = core.with_test_connection(ctx).await;
+        core.connections()
+            .update_account(|a| {
+                a.connections.push(ConnectionRecord {
+                    region: "ap-northeast-1".into(),
+                    ..record
+                });
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(
+            ctx.region_mismatch(false).await.as_deref(),
+            Some("ap-northeast-3")
+        );
+        // 一度確かめたら、クライアントを作り直すまで確かめない
+        assert_eq!(ctx.region_mismatch(false).await, None);
+        core.connections()
+            .set_region("k1", "ap-northeast-3")
+            .unwrap();
+        assert_eq!(
+            core.connections().get("k1").unwrap().region,
+            "ap-northeast-3"
+        );
+        assert!(core.0.clients.lock().unwrap().get("k1").is_none());
+    }
+
+    #[test]
+    fn rejects_root_user_keys() {
+        let err = reject_root_user("arn:aws:iam::123456789012:root").unwrap_err();
+        assert_eq!(err.code, ErrorCode::CredentialsInvalid);
+        assert!(err.message.contains("ルートユーザー"));
+        assert!(reject_root_user("arn:aws:iam::123456789012:user/s3drive-user").is_ok());
+        assert!(reject_root_user("arn:aws:sts::123456789012:assumed-role/R/s").is_ok());
+    }
 
     #[test]
     fn labels_encryption() {

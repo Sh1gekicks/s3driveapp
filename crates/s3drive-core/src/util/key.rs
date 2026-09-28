@@ -72,6 +72,23 @@ pub fn is_folder_key(key: &str) -> bool {
     key.ends_with('/')
 }
 
+/// ダウンロードで保存先のファイル名・フォルダ名に使える階層か（05 §3.9）。
+///
+/// S3 のキーには `..` などの階層も使えるため、そのまま保存先に連結すると保存先の外に書き込めてしまう。
+pub fn is_safe_local_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains('\0')
+}
+
+/// キーの残りの部分（`/` 区切り）を、ダウンロードの保存先からの相対パスの階層にする（NFC に正規化）。
+/// 保存先の外を指しうる階層（`.`、`..`）があれば `None`。
+pub fn local_segments(rest: &str) -> Option<Vec<String>> {
+    rest.split('/')
+        .filter(|s| !s.is_empty())
+        .map(nfc)
+        .map(|s| is_safe_local_name(&s).then_some(s))
+        .collect()
+}
+
 /// 親プレフィックス（`a/b/c.txt` → `a/b/`、`a/b/` → `a/`、`c.txt` → ``）。
 pub fn parent_prefix(key: &str) -> &str {
     let trimmed = key.strip_suffix('/').unwrap_or(key);
@@ -248,6 +265,24 @@ mod tests {
         assert_eq!(base_name("a/b/"), "b");
         assert_eq!(base_name("a/c.txt"), "c.txt");
         assert_eq!(base_name("c.txt"), "c.txt");
+    }
+
+    #[test]
+    fn rejects_local_names_that_escape_the_destination() {
+        assert!(is_safe_local_name("report.pdf"));
+        assert!(is_safe_local_name(".hidden"));
+        assert!(is_safe_local_name("..."));
+        for bad in ["", ".", "..", "a\0b"] {
+            assert!(!is_safe_local_name(bad), "{bad:?}");
+        }
+        assert_eq!(
+            local_segments("sub//a.txt"),
+            Some(vec!["sub".to_string(), "a.txt".to_string()])
+        );
+        assert_eq!(local_segments("../../x.plist"), None);
+        assert_eq!(local_segments("a/./b"), None);
+        assert_eq!(local_segments("a/../b/"), None);
+        assert_eq!(local_segments(""), Some(vec![]));
     }
 
     #[test]

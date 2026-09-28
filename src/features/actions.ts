@@ -292,6 +292,14 @@ export async function rename(item: Entry, newName: string) {
 
 // ---- 削除・移動・クラス変更・取り出し ------------------------------------------------------
 
+/**
+ * 完了のトーストの件数（DLG-02・03 の「{n} 項目」）。すべて成功した場合は、確認ダイアログと同じく選択した
+ * 項目の数にする（バックエンドの件数はフォルダの配下のオブジェクトを数えるため）。スキップがあれば処理した件数。
+ */
+export function selectedCount(items: Entry[], result: BatchResult): number {
+  return result.skipped.length === 0 && result.failed.length === 0 ? items.length : result.succeeded;
+}
+
 export async function deleteEntries(items: Entry[], allVersions: boolean): Promise<BatchResult | null> {
   const connId = conn();
   if (!connId || items.length === 0) return null;
@@ -310,7 +318,7 @@ export async function deleteEntries(items: Entry[], allVersions: boolean): Promi
     runningTitle: ja.dialog.delete.titleMany(items.length),
     start: (onEvent) => ipc.objects.delete(connId, items.map(toTarget), allVersions, onEvent),
     success: (r) => ({
-      title: ja.dialog.delete.done(r.succeeded),
+      title: ja.dialog.delete.done(selectedCount(items, r)),
       description: versioned && !allVersions ? ja.dialog.delete.doneMarker : ja.dialog.delete.doneAll,
     }),
     invalidate: changedKeys(connId),
@@ -344,7 +352,7 @@ export async function move(items: Entry[], destPrefix: string) {
     runningTitle: ja.dialog.move.titleMany(items.length),
     start: (onEvent) => ipc.objects.move(connId, targets, destPrefix, decisions, onEvent),
     success: (r) => ({
-      title: ja.dialog.move.done(r.succeeded),
+      title: ja.dialog.move.done(selectedCount(items, r)),
       description: ja.dialog.move.doneTo(destPrefix),
     }),
     invalidate: changedKeys(connId),

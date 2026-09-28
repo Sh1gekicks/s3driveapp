@@ -1,8 +1,15 @@
 // SCR-02 ファイルブラウザの本体（フィルタバー、検索の状態、一覧、ステータスバー）。
 
 import { useQueryClient } from '@tanstack/react-query';
-import { useMemo } from 'react';
-import { useDebounced, useIndexStatus, useListing, useSearch, useSettings } from '@/app/queries';
+import { useCallback, useMemo } from 'react';
+import {
+  useBucketInfo,
+  useDebounced,
+  useIndexStatus,
+  useListing,
+  useSearch,
+  useSettings,
+} from '@/app/queries';
 import { qk } from '@/app/query-keys';
 import { showError } from '@/features/errors';
 import { formatSize } from '@/lib/format';
@@ -15,8 +22,8 @@ import { filterCount, toSearchQuery, useUiStore } from '@/stores/ui';
 import { FileList } from './file-list';
 import { FilterBar, SearchStatus } from './toolbar';
 
-/** 項目が多い場合は検索を勧める（04 §3.1）。 */
-const MANY_ITEMS = 10_000;
+/** 1 つのフォルダの項目がこれを超えたら、ステータスバーで検索を勧める（04 §3.5）。 */
+const MANY_ITEMS = 100_000;
 
 export function Browser({ connection, narrow }: { connection: Connection; narrow: boolean }) {
   const queryClient = useQueryClient();
@@ -29,6 +36,9 @@ export function Browser({ connection, narrow }: { connection: Connection; narrow
   const selectionKeys = useUiStore((s) => s.selection.keys);
   const settings = useSettings();
   const showHidden = settings.data?.general.showHidden ?? false;
+  // バージョニングの有無でダイアログの文言と削除の方法が変わるため、インスペクタを閉じていても取得しておく。
+  // リージョンが違っていた場合は、ここで修正される（01 §6.1）
+  useBucketInfo(connection.id);
 
   const debouncedQuery = useDebounced(query, 200);
   const searching = debouncedQuery.trim() !== '' || filterCount(filters) > 0;
@@ -45,15 +55,19 @@ export function Browser({ connection, narrow }: { connection: Connection; narrow
     if (!searching) return { entries: sorted, parents: undefined };
     const list: Entry[] = [];
     const map = new Map<string, string>();
-    for (const r of search.data?.entries ?? []) {
+    for (const r of search.results) {
       list.push(r.entry);
       map.set(r.entry.key, r.parent || '/');
     }
     return { entries: list, parents: map };
-  }, [searching, sorted, search.data]);
+  }, [searching, sorted, search.results]);
 
-  const total = searching ? (search.data?.total ?? null) : entries.length;
-  const indexStatus = search.data?.index ?? index.data ?? null;
+  const total = searching ? search.total : entries.length;
+  const indexStatus = search.index ?? index.data ?? null;
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = search;
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const rebuild = () => {
     ipc.search
@@ -103,6 +117,7 @@ export function Browser({ connection, narrow }: { connection: Connection; narrow
         narrow={narrow}
         bucket={connection.bucket}
         status={status}
+        onEndReached={searching ? loadMore : undefined}
       />
     </>
   );

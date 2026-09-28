@@ -3,6 +3,7 @@
 import type { Channel } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
 import { extensionOf, fileKind } from '../../file-kind';
+import { sortEntries } from '../../sort';
 import type {
   AppError,
   BatchEvent,
@@ -13,6 +14,7 @@ import type {
   Decisions,
   Entry,
   ErrorCode,
+  IndexStatus,
   ListOptions,
   ObjectVersion,
   RestoreState,
@@ -111,6 +113,8 @@ export class MockBackend {
   lastLocation: { connectionId: string; prefix: string } | null = null;
   tick: number;
   calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  /** 次の呼び出しで失敗させるコマンド（画面の失敗表示のテスト用）。 */
+  failures = new Map<string, AppError>();
 
   constructor(opts: MockOptions = {}) {
     const data = seed();
@@ -157,6 +161,17 @@ export class MockBackend {
 
   private current(o: MockObject) {
     return o.versions[0];
+  }
+
+  /** 検索インデックスの状態（12 分前に作成済み）。 */
+  private indexStatus(objectCount: number): IndexStatus {
+    return {
+      state: 'ready',
+      objectCount,
+      lastScanAt: iso(new Date(Date.now() - 12 * 60000)),
+      sizeBytes: 4_200_000,
+      progress: null,
+    };
   }
 
   private isLive(o: MockObject) {
@@ -311,8 +326,38 @@ export class MockBackend {
   }
 
   /** 1 つのコマンドを処理する。 */
+  /** 次の呼び出しで応答を保留するコマンド（読み込み中の表示のテスト用）。 */
+  holds = new Map<string, Promise<void>>();
+
+  /** `cmd` の次の呼び出しを `code` で失敗させる。 */
+  failNext(cmd: string, code: ErrorCode, message: string): void {
+    this.failures.set(cmd, { code, message, retryable: false });
+  }
+
+  /** `cmd` の次の呼び出しの応答を、戻り値の関数を呼ぶまで保留する。 */
+  holdNext(cmd: string): () => void {
+    let release = () => {};
+    this.holds.set(
+      cmd,
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    return () => release();
+  }
+
   async handle(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
     this.calls.push({ cmd, args });
+    const failure = this.failures.get(cmd);
+    if (failure) {
+      this.failures.delete(cmd);
+      throw failure;
+    }
+    const hold = this.holds.get(cmd);
+    if (hold) {
+      this.holds.delete(cmd);
+      await hold;
+    }
     // biome-ignore lint/suspicious/noExplicitAny: モックの引数の型はコマンドごとに異なるため、各分岐で扱う
     const a = args as Record<string, any>;
     switch (cmd) {
@@ -406,7 +451,13 @@ export class MockBackend {
         return null;
       case 'bucket_get_info': {
         const b = this.bucket(a.connectionId);
-        return { bucket: b.name, region: b.region, versioning: b.versioning, encryption: b.encryption };
+        return {
+          bucket: b.name,
+          region: b.region,
+          versioning: b.versioning,
+          encryption: b.encryption,
+          regionCorrected: false,
+        };
       }
 
       // オブジェクト
@@ -853,31 +904,39 @@ export class MockBackend {
           if (q.storageClass && v?.storageClass !== q.storageClass) continue;
           out.push({ entry: this.fileEntry(o), parent: parentOf(o.key) });
         }
-        const folderEntries: SearchEntry[] = [...folders].map((k) => ({
-          entry: { type: 'folder', key: k, name: baseName(k), lastModified: null, deleted: false },
-          parent: parentOf(k),
-        }));
-        const entries = text || hasFilters ? [...folderEntries, ...out] : [];
+        if (!text && !hasFilters) {
+          return { entries: [], total: 0, index: this.indexStatus(store.size) };
+        }
+        // Rust 側と同じく、フォルダは最初のページの先頭に最大 200 件を置き、offset・limit はファイルだけに
+        // 適用する。並び順は一覧と同じ規則（04 §10.2）
+        const folderEntries: SearchEntry[] = sortEntries(
+          [...folders].map((k) => ({
+            type: 'folder' as const,
+            key: k,
+            name: baseName(k),
+            lastModified: null,
+            deleted: false,
+          })),
+          q.sort,
+        )
+          .slice(0, 200)
+          .map((entry) => ({ entry, parent: parentOf(entry.key) }));
+        const parents = new Map(out.map((r) => [r.entry.key, r.parent]));
+        const files = sortEntries(
+          out.map((r) => r.entry),
+          q.sort,
+        )
+          .slice(q.offset, q.offset + q.limit)
+          .map((entry) => ({ entry, parent: parents.get(entry.key) ?? '' }));
+        const entries = [...(q.offset === 0 ? folderEntries : []), ...files];
         return {
           entries,
-          total: entries.length,
-          index: {
-            state: 'ready',
-            objectCount: store.size,
-            lastScanAt: iso(new Date(Date.now() - 12 * 60000)),
-            sizeBytes: 4_200_000,
-            progress: null,
-          },
+          total: out.length + folderEntries.length,
+          index: this.indexStatus(store.size),
         };
       }
       case 'search_index_status':
-        return {
-          state: 'ready',
-          objectCount: this.store(a.connectionId).size,
-          lastScanAt: iso(new Date(Date.now() - 12 * 60000)),
-          sizeBytes: 4_200_000,
-          progress: null,
-        };
+        return this.indexStatus(this.store(a.connectionId).size);
       case 'search_index_rebuild': {
         const jobId = crypto.randomUUID();
         const ch = a.onEvent as Channel<unknown>;
@@ -964,8 +1023,11 @@ export class MockBackend {
       case 'settings_update': {
         const patch = a.patch as Record<string, Record<string, unknown>>;
         const next = structuredClone(this.settings) as unknown as Record<string, Record<string, unknown>>;
-        for (const [section, values] of Object.entries(patch))
-          next[section] = { ...next[section], ...values };
+        for (const [section, values] of Object.entries(patch)) {
+          // Rust 側と同じく、ダウンロード先のパスは受け取らない（05 §3.9）
+          const { downloadDir: _ignored, ...rest } = values;
+          next[section] = { ...next[section], ...(section === 'general' ? rest : values) };
+        }
         this.settings = next as unknown as Settings;
         void emit('settings://changed', this.settings);
         return this.settings;

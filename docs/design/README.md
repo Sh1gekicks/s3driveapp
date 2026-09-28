@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | 0.4（ドラフト） |
+| 版 | 0.5（ドラフト） |
 | 作成日 | 2026-09-27 |
 | 対象 | S3 Drive App（macOS ネイティブアプリ） |
 | 入力資料 | 要求事項（当初の requirements.txt。内容は [§4.1](#41-対象) に転記し、ファイルは削除済み）／デザインシステム「S3 Drive デザインシステム」（[Claude Design](https://claude.ai/design/p/2d5c9b6d-736c-4a1d-8ca7-8d2787602a5e)） |
@@ -116,7 +116,7 @@ flowchart LR
 | Apple | Apple Developer Program（有料）には加入しない。署名はアドホック署名とし、公証は行わない（D11）。加入した場合の切り替え手順は [08 §4.3](08-cicd.md#43-developer-id-署名と公証に切り替える場合) |
 | 対応 OS | macOS 13 Ventura 以降、Apple Silicon と Intel（ユニバーサルバイナリ）※要確認（[§10](#10-未決事項要確認事項)） |
 | 言語 | 日本語 UI のみ。文言は辞書ファイルに集約し、将来の多言語化に備える |
-| 開発環境 | Node.js 26、pnpm 12、TypeScript 7、Rust stable。pnpm と Node.js のバージョンは `package.json` で固定し、Node.js は pnpm が取得する（[01 §8](01-architecture.md#8-開発環境とツールチェーン)） |
+| 開発環境 | Node.js 26、pnpm 12、TypeScript 7、Rust stable。pnpm は `package.json` の `packageManager`、Node.js は `.node-version` で固定する（[01 §8](01-architecture.md#8-開発環境とツールチェーン)） |
 
 ## 6. 要件トレーサビリティ
 
@@ -220,3 +220,4 @@ flowchart LR
 | 0.2 | 2026-09-27 | 開発ツールを最新版に更新（pnpm 12、Node.js 26、TypeScript 7、Vitest 5、keyring 4 系の構成）。バージョンの固定方法（[01 §8](01-architecture.md#8-開発環境とツールチェーン)）を追加。CI を `pnpm/setup` に、依存の自動更新を Renovate に変更。デザインシステムの写しを `design-system/` に追加 |
 | 0.3 | 2026-09-27 | Cost Explorer の取得を手動の「更新」のみに変更（自動更新と更新間隔の設定を廃止）（[04 §13.4](04-features.md#134-取得のタイミングと料金)） |
 | 0.4 | 2026-09-27 | Apple Developer Program に加入しないため、リリースを Developer ID 署名 + 公証からアドホック署名 + GitHub の構成証明に変更（D11、[08 §4](08-cicd.md#4-releaseyml)、[07 §8](07-security.md#8-配布物の完全性)） |
+| 0.5 | 2026-09-28 | 設計・実装・テストの突き合わせを反映。ダウンロード先のパスの扱い（[05 §3.9](05-backend-ipc.md#39-ローカルパスの受け渡し)）、`ExpiredToken` の再取得（[01 §7.1](01-architecture.md#71-エラーハンドリング)）、実行時のリージョン補正（[01 §6.1](01-architecture.md#61-aws-クライアントの管理)）、検索結果のページングと並び順（[04 §10.2](04-features.md#102-検索条件)）などを実装どおりに記述。Node.js の固定方法、コマンド・イベント・型の一覧、リポジトリ構成を実装に合わせて更新。画面テスト（Playwright）・カバレッジの強制・ベンチマークを CI とテスト設計に追加（[08 §3](08-cicd.md#3-ciyml)、[09](09-testing.md)） |

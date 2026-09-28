@@ -129,38 +129,41 @@ impl ObjectService<'_> {
                 .map(|a| a.connections.iter().map(|c| c.id.clone()).collect())
                 .unwrap_or_default()
         });
-        let pending: Vec<(String, String, String)> = self
+        let pending: Vec<(String, String, String, String)> = self
             .core
             .0
             .db
             .run(|c| {
                 let mut stmt = c.prepare(
-                    "SELECT connection_id, key, version_id FROM restore_requests WHERE status = 'inProgress'",
+                    "SELECT connection_id, key, version_id, requested_at FROM restore_requests WHERE status = 'inProgress'",
                 )?;
                 let rows = stmt
-                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
             })
             .await?;
         let mut completed = Vec::new();
-        for (cid, k, v) in pending.into_iter().filter(|(c, _, _)| own.contains(c)) {
+        for (cid, k, v, requested_at) in pending.into_iter().filter(|(c, ..)| own.contains(c)) {
             let Ok(ctx) = self.core.ctx(&cid).await else {
                 continue;
             };
             let version = (!v.is_empty()).then_some(v.as_str());
             let state = match head(&ctx, &k, version).await {
-                Ok(info) => info.restore,
-                Err(e) if e.code == ErrorCode::NotFound => RestoreState::NotArchived,
+                Ok(info) => Some(info.restore),
+                // 削除された
+                Err(e) if e.code == ErrorCode::NotFound => None,
                 Err(e) => {
                     log::debug!("取り出し状態を確認できません: {e}");
                     continue;
                 }
             };
-            let (status, expiry) = match state {
-                RestoreState::InProgress => continue,
-                RestoreState::Restored { expiry } => ("restored", Some(expiry)),
-                _ => ("restored", None),
+            let requested = time::parse_rfc3339(&requested_at);
+            let (status, expiry) = match restore_check(state, requested, time::now()) {
+                RestoreCheck::Pending => continue,
+                RestoreCheck::Completed(expiry) => ("restored", Some(expiry)),
+                // 完了ではないため知らせない（削除・上書きされた、または取り出しが始まらなかった）
+                RestoreCheck::Abandoned => ("abandoned", None),
             };
             let (c2, k2, v2) = (cid.clone(), k.clone(), v.clone());
             self.core
@@ -174,12 +177,49 @@ impl ObjectService<'_> {
                     Ok(())
                 })
                 .await?;
-            completed.push(RestoreCompleted {
-                connection_id: cid,
-                key: k,
-            });
+            if status == "restored" {
+                completed.push(RestoreCompleted {
+                    connection_id: cid,
+                    key: k,
+                });
+            }
         }
         Ok(completed)
+    }
+}
+
+/// 取り出しの要求をやめて確認しなくなるまでの時間（Deep Archive の大容量でも 48 時間以内に終わる）。
+const RESTORE_GIVE_UP: chrono::Duration = chrono::Duration::days(3);
+
+/// 取り出しの要求の確認結果（04 §8.4）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreCheck {
+    /// まだ取り出し中（確認を続ける）。
+    Pending,
+    /// 取り出しが完了した（有効期限）。macOS の通知とトーストで知らせる。
+    Completed(String),
+    /// 完了ではない理由で確認をやめる（削除された、アーカイブでなくなった、取り出しが始まらないまま時間が過ぎた）。
+    Abandoned,
+}
+
+/// HeadObject の結果（`None` は対象がない）から、取り出しの要求の状態を決める。
+///
+/// `Archived`（`x-amz-restore` がない）は、要求直後でまだ反映されていないことがあるため、完了とはみなさず
+/// 確認を続ける。一定時間が過ぎても始まらない場合はやめる。
+pub fn restore_check(
+    state: Option<RestoreState>,
+    requested_at: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> RestoreCheck {
+    match state {
+        Some(RestoreState::Restored { expiry }) => RestoreCheck::Completed(expiry),
+        Some(RestoreState::InProgress) => RestoreCheck::Pending,
+        Some(RestoreState::Archived) if requested_at.is_none_or(|t| now - t < RESTORE_GIVE_UP) => {
+            RestoreCheck::Pending
+        }
+        Some(RestoreState::Archived) | Some(RestoreState::NotArchived) | None => {
+            RestoreCheck::Abandoned
+        }
     }
 }
 
@@ -225,6 +265,46 @@ async fn request_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notifies_only_completed_restores() {
+        let now = time::parse_rfc3339("2026-09-28T00:00:00Z").unwrap();
+        let requested = Some(now - chrono::Duration::hours(2));
+        assert_eq!(
+            restore_check(
+                Some(RestoreState::Restored {
+                    expiry: "2026-10-05T00:00:00Z".into()
+                }),
+                requested,
+                now
+            ),
+            RestoreCheck::Completed("2026-10-05T00:00:00Z".into())
+        );
+        assert_eq!(
+            restore_check(Some(RestoreState::InProgress), requested, now),
+            RestoreCheck::Pending
+        );
+        // 要求直後で x-amz-restore がまだない
+        assert_eq!(
+            restore_check(Some(RestoreState::Archived), requested, now),
+            RestoreCheck::Pending
+        );
+        // 始まらないまま 3 日以上たった
+        assert_eq!(
+            restore_check(
+                Some(RestoreState::Archived),
+                Some(now - chrono::Duration::days(4)),
+                now
+            ),
+            RestoreCheck::Abandoned
+        );
+        // 削除された・アーカイブでないクラスで上書きされた
+        assert_eq!(restore_check(None, requested, now), RestoreCheck::Abandoned);
+        assert_eq!(
+            restore_check(Some(RestoreState::NotArchived), requested, now),
+            RestoreCheck::Abandoned
+        );
+    }
 
     #[test]
     fn parses_restore_headers() {

@@ -568,7 +568,8 @@ async fn deletes_with_markers_all_versions_and_large_folders() {
         .delete(&env.conn, vec![Target::file("a.txt")], true, sink.clone())
         .await
         .unwrap();
-    assert_eq!(wait_batch(&sink).await.succeeded, 2);
+    // 2 つのバージョンを削除しても、件数は項目（キー）で数える（DLG-02）
+    assert_eq!(wait_batch(&sink).await.succeeded, 1);
     let versions = env
         .core
         .versions()
@@ -918,4 +919,170 @@ async fn builds_and_queries_the_search_index() {
     let metrics = env.core.metrics_storage(&env.conn, true).await.unwrap();
     assert_eq!(metrics.source, MetricsSource::Index);
     assert_eq!(metrics.object_count, Some(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn aborts_multipart_uploads_on_cancel() {
+    let endpoint = require_moto!();
+    let env = setup(&endpoint, false).await;
+    env.core
+        .settings_store()
+        .patch(
+            serde_json::json!({ "transfer": { "multipartThresholdMb": 8, "maxPartsPerFile": 1 } }),
+        )
+        .unwrap();
+    let dir = TempDir::new().unwrap();
+    let big = dir.path().join("big.bin");
+    // 8 MiB のパートが 20 個。1 つずつ送るため、送信中にキャンセルできる
+    std::fs::write(&big, vec![7u8; 160 * 1024 * 1024]).unwrap();
+    let selection = env.core.selections().register(vec![big]);
+    let plan = env
+        .core
+        .upload_prepare(&env.conn, "", &selection.selection_id)
+        .await
+        .unwrap();
+    let job = env
+        .core
+        .upload_start(&plan.plan_id, Decisions::default())
+        .await
+        .unwrap();
+
+    let multipart_uploads = || async {
+        env.s3
+            .list_multipart_uploads()
+            .bucket(&env.bucket)
+            .send()
+            .await
+            .unwrap()
+            .uploads()
+            .len()
+    };
+    // CreateMultipartUpload の後（パートの送信中）にキャンセルする
+    let mut started = false;
+    for _ in 0..2000 {
+        if multipart_uploads().await > 0 {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(started, "multipart upload did not start");
+    assert!(env.core.job_cancel(&job));
+    let job = wait_transfer(&env.core, &job).await;
+    assert_eq!(job.status, JobStatus::Canceled);
+
+    // 未完了のマルチパートアップロードを中止し、記録も消す（04 §4.2、§14.5）
+    assert_eq!(multipart_uploads().await, 0);
+    assert!(!env.exists("big.bin").await);
+    let records: i64 = env
+        .core
+        .db()
+        .run(|c| Ok(c.query_row("SELECT count(*) FROM transfers", [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deletes_permanently_without_versioning() {
+    let endpoint = require_moto!();
+    let env = setup(&endpoint, false).await;
+    env.put("gone.txt", b"x").await;
+    env.put("dir/a.txt", b"x").await;
+    env.put("dir/b.txt", b"x").await;
+
+    let sink = Arc::new(MemorySink::default());
+    env.core
+        .objects()
+        .delete(
+            &env.conn,
+            vec![Target::file("gone.txt"), Target::folder("dir/")],
+            false,
+            sink.clone(),
+        )
+        .await
+        .unwrap();
+    let r = wait_batch(&sink).await;
+    assert_eq!(r.succeeded, 3);
+    assert!(env.keys("").await.is_empty());
+
+    // バージョニングが無効のバケットでは完全に削除され、削除マーカーも残らない（04 §6.1）
+    let versions = env
+        .s3
+        .list_object_versions()
+        .bucket(&env.bucket)
+        .send()
+        .await
+        .unwrap();
+    assert!(versions.versions().is_empty());
+    assert!(versions.delete_markers().is_empty());
+    let deleted = env
+        .list(
+            "",
+            ListOptions {
+                show_hidden: false,
+                include_deleted: true,
+            },
+        )
+        .await;
+    assert!(deleted.is_empty(), "{deleted:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn requests_restores_and_detects_completion() {
+    let endpoint = require_moto!();
+    let env = setup(&endpoint, false).await;
+    env.s3
+        .put_object()
+        .bucket(&env.bucket)
+        .key("cold/archive.bin")
+        .storage_class(aws_sdk_s3::types::StorageClass::Glacier)
+        .body(ByteStream::from_static(b"frozen"))
+        .send()
+        .await
+        .unwrap();
+    env.put("cold/warm.txt", b"warm").await;
+
+    let detail = env
+        .core
+        .objects()
+        .head(&env.conn, "cold/archive.bin", None)
+        .await
+        .unwrap();
+    assert_eq!(detail.restore, RestoreState::Archived);
+
+    // フォルダを指定すると、配下のアーカイブだけを取り出す（04 §8.4）
+    let result = env
+        .core
+        .objects()
+        .request_restore(
+            &env.conn,
+            &[Target::folder("cold/")],
+            RestoreTier::Standard,
+            Some(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.succeeded, 1, "{result:?}");
+    assert!(result.failed.is_empty());
+
+    // moto は取り出しをすぐに完了させる。完了した要求だけを知らせる
+    let completed = env.core.objects().check_restores().await.unwrap();
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].key, "cold/archive.bin");
+    assert!(
+        env.core
+            .objects()
+            .check_restores()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let detail = env
+        .core
+        .objects()
+        .head(&env.conn, "cold/archive.bin", None)
+        .await
+        .unwrap();
+    assert!(matches!(detail.restore, RestoreState::Restored { .. }));
 }

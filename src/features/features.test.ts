@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Entry } from '@/lib/ipc';
+import { selectedCount } from './actions';
 import { summarize } from './batch';
 import { blankMenu, itemMenu } from './browser/menus';
 
@@ -14,6 +15,20 @@ describe('一括操作の結果の要約', () => {
     [{ succeeded: 0, skipped: [{ key: 'b', reason: 'r' }], failed: [{ key: 'a', error: err }] }, 'partial'],
   ])('%j → %s', (result, kind) => {
     expect(summarize(result)).toBe(kind);
+  });
+});
+
+describe('完了のトーストの件数（DLG-02・03）', () => {
+  const items = [
+    { type: 'folder', key: 'dir/', name: 'dir', lastModified: null, deleted: false },
+  ] satisfies Entry[];
+  it('すべて成功したら選択した項目の数（フォルダの配下の件数ではない）', () => {
+    expect(selectedCount(items, { succeeded: 1500, skipped: [], failed: [] })).toBe(1);
+  });
+  it('スキップがあれば処理した件数', () => {
+    expect(selectedCount(items, { succeeded: 3, skipped: [{ key: 'dir/a', reason: 'r' }], failed: [] })).toBe(
+      3,
+    );
   });
 });
 

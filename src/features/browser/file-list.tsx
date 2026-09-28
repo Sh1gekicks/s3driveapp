@@ -54,7 +54,12 @@ export interface FileListProps {
   narrow: boolean;
   bucket: string;
   status: React.ReactNode;
+  /** 一覧の末尾付近まで表示したときに呼ぶ（検索結果の続きの取得。04 §10.2）。 */
+  onEndReached?: () => void;
 }
+
+/** 末尾からこの行数以内が表示されたら続きを取得する。 */
+const END_REACHED_ROWS = 20;
 
 function useElementWidth(ref: React.RefObject<HTMLElement | null>): number {
   const [width, setWidth] = React.useState(0);
@@ -132,6 +137,7 @@ export function FileList({
   narrow,
   bucket,
   status,
+  onEndReached,
 }: FileListProps) {
   const viewMode = useUiStore((s) => s.viewMode);
   const selectionKeys = useUiStore((s) => s.selection.keys);
@@ -161,6 +167,12 @@ export function FileList({
     paddingStart: viewMode === 'list' ? 4 : GRID_PAD,
     paddingEnd: viewMode === 'list' ? 4 : GRID_PAD,
   });
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const lastVisible = virtualItems[virtualItems.length - 1]?.index ?? -1;
+  React.useEffect(() => {
+    if (onEndReached && rowCount > 0 && lastVisible >= rowCount - END_REACHED_ROWS) onEndReached();
+  }, [onEndReached, lastVisible, rowCount]);
 
   // 空白部分のクリック・右クリックで選択を解除する（キーボードでは Esc）。項目の上では項目側の処理に任せる
   React.useEffect(() => {

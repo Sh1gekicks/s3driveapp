@@ -97,12 +97,14 @@ pub fn build_sql(connection_id: &str, q: &SearchQuery, now: DateTime<Local>) -> 
         params.push(Value::Text(class.as_s3().to_string()));
     }
 
+    // 並び順は一覧と同じ規則（名前は自然順。同じ値は名前順）にする（04 §10.2）
     let dir = if q.sort.dir < 0 { "DESC" } else { "ASC" };
+    let by_name = "o.name_norm COLLATE NATURAL_ORDER";
     let order_sql = match q.sort.key {
-        SortKey::Name => format!("o.name_norm {dir}, o.key"),
-        SortKey::Modified => format!("o.last_modified {dir}, o.name_norm"),
-        SortKey::Size => format!("o.size {dir}, o.name_norm"),
-        SortKey::StorageClass => format!("o.storage_class {dir}, o.name_norm"),
+        SortKey::Name => format!("{by_name} {dir}, o.key"),
+        SortKey::Modified => format!("o.last_modified {dir}, {by_name}"),
+        SortKey::Size => format!("o.size {dir}, {by_name}"),
+        SortKey::StorageClass => format!("o.storage_class {dir}, {by_name}"),
     };
     BuiltQuery {
         where_sql: clauses.join(" AND "),
@@ -158,19 +160,22 @@ pub(crate) fn run_query(
 
     let mut entries = Vec::new();
     let mut folder_total = 0i64;
-    // 名前だけで検索し、フィルタを指定していない場合は、名前が一致するフォルダも含める（DS の仕様）
+    // 名前だけで検索し、フィルタを指定していない場合は、名前が一致するフォルダも含める（DS の仕様）。
+    // フォルダは一覧と同じく先頭に置くため、最初のページ（offset = 0）にだけ最大 FOLDER_LIMIT 件を含め、
+    // offset・limit はファイルだけに適用する。件数も返したフォルダの数だけを加える。
     if !text.is_empty() && !q.has_filters() {
-        folder_total = conn.query_row(
+        let matched: i64 = conn.query_row(
             "SELECT count(*) FROM prefixes WHERE connection_id = ?1 AND instr(name_norm, ?2) > 0",
             rusqlite::params![connection_id, text],
             |r| r.get(0),
         )?;
+        folder_total = matched.min(FOLDER_LIMIT);
         if q.offset == 0 {
             let mut stmt = conn.prepare(
                 "SELECT p.prefix, p.name, p.parent, m.last_modified FROM prefixes AS p
                  LEFT JOIN objects AS m ON m.connection_id = p.connection_id AND m.key = p.prefix
                  WHERE p.connection_id = ?1 AND instr(p.name_norm, ?2) > 0
-                 ORDER BY p.name_norm LIMIT ?3",
+                 ORDER BY p.name_norm COLLATE NATURAL_ORDER LIMIT ?3",
             )?;
             let rows =
                 stmt.query_map(rusqlite::params![connection_id, text, FOLDER_LIMIT], |r| {
@@ -411,6 +416,36 @@ mod tests {
         q.offset = 2;
         q.limit = 10;
         assert_eq!(keys(&search(&db, q).await.0), ["reports/README"]);
+    }
+
+    #[tokio::test]
+    async fn sorts_names_naturally_and_pages_only_files() {
+        let (db, _d) = Db::open_temp().unwrap();
+        let old = "2020-01-01T00:00:00Z";
+        seed(
+            &db,
+            "c",
+            &[
+                ("log10/", 0, old, StorageClass::Standard),
+                ("log2/", 0, old, StorageClass::Standard),
+                ("a/log10.txt", 1, old, StorageClass::Standard),
+                ("a/log2.txt", 1, old, StorageClass::Standard),
+                ("a/log1.txt", 1, old, StorageClass::Standard),
+            ],
+        )
+        .await;
+        let mut q = SearchQuery::text("log");
+        q.limit = 2;
+        let (entries, total) = search(&db, q.clone()).await;
+        // フォルダ 2 件は先頭に（自然順）、ファイルは limit 件まで（自然順）
+        assert_eq!(total, 5);
+        assert_eq!(
+            keys(&entries),
+            ["log2/", "log10/", "a/log1.txt", "a/log2.txt"]
+        );
+        // 2 ページ目はファイルの続きだけ
+        q.offset = 2;
+        assert_eq!(keys(&search(&db, q).await.0), ["a/log10.txt"]);
     }
 
     #[tokio::test]

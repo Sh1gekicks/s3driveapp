@@ -31,7 +31,7 @@
 | `code_challenge` / `code_challenge_method` | `BASE64URL(SHA256(code_verifier))` / `S256`（`code_verifier` は 64 文字の乱数） |
 | `state` | 32 バイトの乱数（CSRF 対策） |
 | `nonce` | 32 バイトの乱数（ID トークンの再送対策） |
-| `prompt` | `select_account`（初回は `consent` も付ける） |
+| `prompt` | `select_account consent`（毎回。サインアウトでリフレッシュトークンを取り消すため、次のサインインでもリフレッシュトークンを発行させる。[04 §1.2](04-features.md#12-サインイン)） |
 | `access_type` | `offline`（リフレッシュトークンを得る） |
 
 ループバックの待ち受け:
@@ -46,9 +46,9 @@
 - トークンエンドポイント（`https://oauth2.googleapis.com/token`）に `code`、`code_verifier`、`client_id`、`client_secret`、`redirect_uri` を送る。通信は TLS（rustls、証明書検証あり）。
 - ID トークンは openidconnect クレートで次を検証する。
   - 署名（Google の JWKS。ディスカバリ文書から取得し、キャッシュする）
-  - `iss` が `https://accounts.google.com` または `accounts.google.com`
+  - `iss` がディスカバリ文書の issuer（`https://accounts.google.com`）と一致する
   - `aud` がクライアント ID
-  - `exp`（60 秒の猶予）と `iat`
+  - `exp`（時刻のずれに備えて 60 秒の猶予を設ける）
   - `nonce`（リフレッシュで得た ID トークンでは省略）
   - `email_verified` が `true`
 - 許可リスト（ビルド時設定 `S3DRIVE_ALLOWED_EMAILS`、`S3DRIVE_ALLOWED_DOMAINS`）が設定されていれば照合する。ドメインの制限は `hd` クレームで確認する。
@@ -221,7 +221,7 @@ Cost Explorer の API の利用可否は IAM ポリシーで決まる（請求�
 | `freezePrototype` | プロトタイプ汚染を防ぐ |
 | 開発者ツール | リリースビルドでは無効 |
 | 権限（capabilities） | ウィンドウごとに必要なコマンドとプラグインの操作だけを許可する（[05 §8](05-backend-ipc.md#8-tauri-の権限capabilities)）。フロントエンドには fs・dialog・opener・shell の権限を与えない |
-| ローカルパス | フロントエンドからパス文字列を受け取らず、Rust が発行した選択 ID だけを受け付ける（[05 §3.9](05-backend-ipc.md#39-ローカルパスの受け渡し)） |
+| ローカルパス | フロントエンドからパス文字列を受け取らず、Rust が発行した選択 ID だけを受け付ける。既定のダウンロード先も `settings_update` では変更できない。ダウンロードでは、S3 のキーの `.`・`..` の階層で保存先の外に書き込まないよう、該当する項目を保存しない（[05 §3.9](05-backend-ipc.md#39-ローカルパスの受け渡し)） |
 | 入力の検証 | 全コマンドで、接続 ID がサインイン中のアカウントのものか、キー・プレフィックス・名前が規則に合うかを検証する |
 | 信頼できないデータの表示 | オブジェクトのキー、メタデータ、エラーメッセージは常にテキストとして描画する。`dangerouslySetInnerHTML` は Biome のルールで禁止する |
 | Isolation パターン | サードパーティのスクリプトを読み込まないため採用しない |
@@ -248,11 +248,11 @@ Cost Explorer の API の利用可否は IAM ポリシーで決まる（請求�
 
 | 対策 | 内容 |
 |---|---|
-| ロックファイル | `Cargo.lock` と `pnpm-lock.yaml` をコミットする。CI では Cargo は `--locked`、pnpm は `pnpm/setup` の `require-lockfile` で、ロックファイルと食い違う場合に失敗させる。`pnpm-lock.yaml` には `devEngines.runtime` で指定した Node.js のバージョンとチェックサムも記録される |
+| ロックファイル | `Cargo.lock` と `pnpm-lock.yaml` をコミットする。CI では Cargo は `--locked`、pnpm は `pnpm/setup` の `require-lockfile` で、ロックファイルと食い違う場合に失敗させる。Node.js のバージョンは `.node-version` で固定する |
 | 公開直後のパッケージ | pnpm の `minimumReleaseAge`（1 日。pnpm 11 以降の既定値）で、公開から 1 日未満のバージョンをインストールしない。乗っ取られたパッケージの悪意あるバージョンが公開直後に取り下げられるまでの間を避ける |
 | 依存のビルドスクリプト | pnpm の `allowBuilds` で許可したパッケージだけ postinstall などを実行する（既定は実行しない。[01 §8.2](01-architecture.md#82-pnpm-の設定)） |
 | 脆弱性・ライセンスの検査 | `cargo deny check`（advisories、licenses、bans）と `pnpm audit --prod` を CI で実行する。pnpm の監査で例外にする脆弱性は GHSA ID で `auditConfig.ignoreGhsas` に理由とともに記録する |
-| 依存の更新 | Renovate（npm、cargo、github-actions）で週 1 回。Renovate の `minimumReleaseAge` も 1 日に揃える（[08 §2.1](08-cicd.md#21-依存の自動更新renovate)） |
+| 依存の更新 | Renovate（npm、cargo、github-actions、docker）で週 1 回。Renovate の `minimumReleaseAge` も 1 日に揃える（[08 §2.1](08-cicd.md#21-依存の自動更新renovate)） |
 | GitHub Actions | サードパーティのアクションはコミット SHA で固定する（SHA の更新は Renovate）。ワークフローごとに `permissions` を最小にする |
 | 秘密情報 | OAuth・アップデート署名の鍵は GitHub Environments（`release`）のシークレットに置き、レビュー承認を必須にする |
 

@@ -115,13 +115,19 @@ pub async fn credential_update(
 
 #[tauri::command]
 pub async fn bucket_get_info(
+    app: AppHandle,
     state: State<'_, AppState>,
     connection_id: String,
     force: Option<bool>,
 ) -> CmdResult<BucketInfo> {
-    ipc(state
+    let info = ipc(state
         .core
         .connections()
         .bucket_info(&connection_id, force.unwrap_or(false))
-        .await)
+        .await)?;
+    // リージョンを修正した場合は、接続の一覧を取り直させる（01 §6.1）
+    if info.region_corrected {
+        emit_all(&app, CONNECTIONS_CHANGED, ());
+    }
+    Ok(info)
 }

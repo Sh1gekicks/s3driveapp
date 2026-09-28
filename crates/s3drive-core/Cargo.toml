@@ -57,7 +57,17 @@ libc = "0.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
+[features]
+# 検索のベンチマーク（benches/search.rs。09 §5）でだけ使う API を公開する
+bench = []
+
+[[bench]]
+name = "search"
+harness = false
+required-features = ["bench"]
+
 [dev-dependencies]
+criterion = { version = "0.8", default-features = false }
 aws-smithy-mocks = "0.3"
 aws-sdk-s3 = { workspace = true, features = ["test-util"] }
 aws-sdk-sts = { workspace = true, features = ["test-util"] }

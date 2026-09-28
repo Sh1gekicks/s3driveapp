@@ -421,13 +421,11 @@ impl Core {
                 .upload_id(&upload_id)
                 .send()
                 .await;
-            let gone = match &result {
-                Ok(_) => true,
-                Err(e) => {
-                    error_map::classify(e, Ctx::Op("s3:AbortMultipartUpload")).code
-                        == ErrorCode::NotFound
-                }
-            };
+            let gone = abort_settled(
+                &result
+                    .map(|_| ())
+                    .map_err(|e| error_map::classify(&e, Ctx::Op("s3:AbortMultipartUpload"))),
+            );
             if gone {
                 aborted += 1;
                 forget_upload(&self.0.db, &id).await?;
@@ -608,18 +606,36 @@ async fn multipart_upload(
     }
 
     let result = upload_parts_and_complete(job, file, &upload_id, part_size, counter).await;
-    if result.is_err() {
+    let finished = match &result {
+        Ok(_) => true,
         // キャンセル・失敗時は未完了のマルチパートアップロードを中止する
-        let _ = s3
-            .abort_multipart_upload()
-            .bucket(&ctx.bucket)
-            .key(&file.key)
-            .upload_id(&upload_id)
-            .send()
-            .await;
+        Err(_) => {
+            let aborted = s3
+                .abort_multipart_upload()
+                .bucket(&ctx.bucket)
+                .key(&file.key)
+                .upload_id(&upload_id)
+                .send()
+                .await
+                .map(|_| ())
+                .map_err(|e| error_map::classify(&e, Ctx::Op("s3:AbortMultipartUpload")));
+            abort_settled(&aborted)
+        }
+    };
+    // 中止できなかった場合（通信断など）は記録を残し、次回の起動時に中止し直す（04 §14.5）
+    if finished {
+        forget_upload(db, &transfer_id).await?;
     }
-    forget_upload(db, &transfer_id).await?;
     result
+}
+
+/// `AbortMultipartUpload` の結果から、アップロードの後始末が済んだか（記録を消してよいか）を判定する。
+/// すでにない（`NoSuchUpload`）場合も済んだものとして扱う。
+fn abort_settled(result: &CoreResult<()>) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(e) => e.code == ErrorCode::NotFound,
+    }
 }
 
 async fn upload_parts_and_complete(
@@ -744,5 +760,22 @@ async fn upload_part(
             }
             Err(error_map::classify(&e, Ctx::Op("s3:PutObject")))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_the_record_when_the_abort_fails() {
+        assert!(abort_settled(&Ok(())));
+        // すでに中止・完了済み（NoSuchUpload）
+        assert!(abort_settled(&Err(CoreError::new(ErrorCode::NotFound))));
+        // 通信断などで中止できなかった場合は、次回の起動時に中止し直す（04 §14.5）
+        assert!(!abort_settled(&Err(CoreError::new(ErrorCode::Network))));
+        assert!(!abort_settled(&Err(CoreError::new(
+            ErrorCode::AccessDenied
+        ))));
     }
 }
