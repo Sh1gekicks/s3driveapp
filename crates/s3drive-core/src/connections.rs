@@ -802,10 +802,9 @@ impl ConnectionService<'_> {
         let Some(actual) = ctx.region_mismatch(force).await else {
             return ctx.bucket_info(force).await;
         };
-        log::info!(
-            "バケットのリージョンが {} ではなく {actual} のため、接続を修正します",
-            ctx.region
-        );
+        // 修正後のリージョンは画面で知らせる。接続の値はログに出さない（CodeQL の rust/cleartext-logging が
+        // キーチェーンから作った接続の情報をすべて機密として扱うため）
+        log::info!("バケットのリージョンが接続の設定と違うため、接続のリージョンを修正します");
         self.set_region(connection_id, &actual)?;
         let ctx = self.core.ctx(connection_id).await?;
         ctx.region_checked.store(true, Ordering::Relaxed);

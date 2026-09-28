@@ -537,7 +537,7 @@ pub(crate) mod test_support {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        panic!("transfer {job_id} did not finish");
+        panic!("transfer did not finish");
     }
 }
 

@@ -1063,7 +1063,7 @@ async fn requests_restores_and_detects_completion() {
         )
         .await
         .unwrap();
-    assert_eq!(result.succeeded, 1, "{result:?}");
+    assert_eq!(result.succeeded, 1);
     assert!(result.failed.is_empty());
 
     // moto は取り出しをすぐに完了させる。完了した要求だけを知らせる
