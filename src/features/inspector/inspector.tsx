@@ -1,6 +1,15 @@
 // インスペクタ（03 §5.6）。DS: ui_kits/s3-drive/Inspector.jsx。
 
-import { ArchiveRestore, Download, FolderInput, Info, Layers, RotateCcw, Trash2 } from 'lucide-react';
+import {
+  ArchiveRestore,
+  CircleAlert,
+  Download,
+  FolderInput,
+  Info,
+  Layers,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react';
 import type * as React from 'react';
 import { useBucketInfo, useFolderSummary, useObjectDetail, useVersions } from '@/app/queries';
 import { FileIcon } from '@/components/ds/file-icon';
@@ -14,10 +23,18 @@ import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Tooltip } from '@/components/ui/tooltip';
 import { downloadVersion, restoreVersion, runSelectionAction } from '@/features/actions';
 import { isArchived, useSelectedEntries } from '@/features/context';
+import { isCredentialError } from '@/features/errors';
 import { fileKind, KIND_LABEL } from '@/lib/file-kind';
 import { formatDate, formatNumber, formatSize, formatSizeDetail } from '@/lib/format';
 import { ja } from '@/lib/i18n/ja';
-import type { BucketInfo, Connection, Entry, ObjectDetail, RestoreState, Versioning } from '@/lib/ipc';
+import {
+  type BucketInfo,
+  type Connection,
+  type Entry,
+  type RestoreState,
+  toAppError,
+  type Versioning,
+} from '@/lib/ipc';
 import { isArchiveClass } from '@/lib/storage-class';
 import { cn } from '@/lib/utils';
 import { useNavStore } from '@/stores/nav';
@@ -80,6 +97,32 @@ function restoreLabel(r: RestoreState): string {
 }
 
 const wrap = 'flex flex-col gap-4 p-4';
+
+/** 取得できなかった理由と対処。権限がない場合、理由には必要な IAM アクションが含まれる（05 §5）。 */
+function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const err = toAppError(error);
+  return (
+    <div role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+      <Icon icon={CircleAlert} size={14} className="mt-0.5 shrink-0" />
+      <div className="flex min-w-0 flex-col items-start gap-1">
+        <span className="break-words selectable">{err.message || ja.list.loadFailed}</span>
+        {isCredentialError(err) ? (
+          <Button
+            variant="link"
+            size="sm"
+            onClick={() => useUiStore.getState().openDialog({ type: 'credentials' })}
+          >
+            {ja.menu.credentials}
+          </Button>
+        ) : (
+          <Button variant="link" size="sm" onClick={onRetry}>
+            {ja.common.retry}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function MultiInspector({ items }: { items: Entry[] }) {
   const bytes = items.reduce((s, e) => s + (e.type === 'file' ? e.size : 0), 0);
@@ -168,9 +211,18 @@ function FolderInspector({
   );
 }
 
-function Details({ entry, detail }: { entry: Entry & { type: 'file' }; detail: ObjectDetail | undefined }) {
-  const d = detail;
+function Details({
+  entry,
+  query,
+}: {
+  entry: Entry & { type: 'file' };
+  query: ReturnType<typeof useObjectDetail>;
+}) {
+  const d = query.data;
   const archived = isArchived(entry);
+  // HeadObject で求める項目。取得に失敗したらスケルトンのままにせず「—」にし、下に理由を示す
+  const pending = (width: string) =>
+    query.isError ? ja.common.none : <Skeleton className={cn('h-3', width)} />;
   return (
     <>
       <Grid>
@@ -194,7 +246,7 @@ function Details({ entry, detail }: { entry: Entry & { type: 'file' }; detail: O
               ) : null}
             </span>
           ) : (
-            <Skeleton className="h-3 w-28" />
+            pending('w-28')
           )}
         </Row>
         <Row label={t.modified}>
@@ -208,7 +260,7 @@ function Details({ entry, detail }: { entry: Entry & { type: 'file' }; detail: O
           </Button>
         </dd>
         <Row label={t.contentType} mono>
-          {d ? d.contentType : <Skeleton className="h-3 w-24" />}
+          {d ? d.contentType : pending('w-24')}
         </Row>
         <Row label={t.key} mono>
           {entry.key}
@@ -217,15 +269,7 @@ function Details({ entry, detail }: { entry: Entry & { type: 'file' }; detail: O
           {entry.etag.replaceAll('"', '')}
         </Row>
         <Row label={t.encryption}>
-          {d ? (
-            d.kmsKeyId ? (
-              `${d.encryption}（${d.kmsKeyId}）`
-            ) : (
-              d.encryption
-            )
-          ) : (
-            <Skeleton className="h-3 w-24" />
-          )}
+          {d ? (d.kmsKeyId ? `${d.encryption}（${d.kmsKeyId}）` : d.encryption) : pending('w-24')}
         </Row>
         {d?.versionId && d.versionId !== 'null' ? (
           <Row label={t.versionId} mono>
@@ -236,6 +280,7 @@ function Details({ entry, detail }: { entry: Entry & { type: 'file' }; detail: O
           <Row label={t.restoreState}>{restoreLabel(d?.restore ?? entry.restore)}</Row>
         ) : null}
       </Grid>
+      {query.isError ? <LoadError error={query.error} onRetry={() => void query.refetch()} /> : null}
       {d && Object.keys(d.userMetadata).length > 0 ? (
         <details className="text-sm">
           <summary className="cursor-default text-muted-foreground select-none">{t.userMetadata}</summary>
@@ -363,7 +408,11 @@ function Versions({
           {ja.common.loadMore}
         </Button>
       ) : null}
-      {query.isError ? <div className="px-2 text-sm text-destructive">{ja.list.loadFailed}</div> : null}
+      {query.isError ? (
+        <div className="px-2">
+          <LoadError error={query.error} onRetry={() => void query.refetch()} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -399,7 +448,7 @@ function FileInspector({
         ]}
       />
       {tab === 'details' ? (
-        <Details entry={entry} detail={detail.data} />
+        <Details entry={entry} query={detail} />
       ) : (
         <Versions entry={entry} bucket={bucket} query={versions} />
       )}
