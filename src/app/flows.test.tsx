@@ -245,4 +245,19 @@ describe('ストレージとコスト（SCR-03）', () => {
     act(() => handleCommand('view.reload'));
     await waitFor(() => expect(backend.calls.filter((c) => c.cmd === 'cost_refresh')).toHaveLength(before));
   });
+
+  it('CloudWatch のメトリクスもインデックスもなければ、インデックスを作成して集計する', async () => {
+    const user = userEvent.setup();
+    renderWithMock({
+      before: (b) => {
+        for (const bucket of b.buckets) bucket.usageGb = {};
+      },
+    });
+    await within(await fileList()).findByText('logo.png');
+    act(() => handleCommand('go.dashboard'));
+    await screen.findByText(/CloudWatch に容量のメトリクスがまだありません/);
+    await user.click(screen.getByRole('button', { name: 'インデックスを作成' }));
+    expect(await screen.findByText('インデックスから集計（現行バージョンのみ）')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'インデックスを作成' })).toBeNull();
+  });
 });

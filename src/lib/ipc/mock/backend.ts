@@ -115,6 +115,8 @@ export class MockBackend {
   calls: { cmd: string; args: Record<string, unknown> }[] = [];
   /** 次の呼び出しで失敗させるコマンド（画面の失敗表示のテスト用）。 */
   failures = new Map<string, AppError>();
+  /** 検索インデックスを作成した接続（CloudWatch の容量がないときの集計元。04 §12.2）。 */
+  indexed = new Set<string>();
 
   constructor(opts: MockOptions = {}) {
     const data = seed();
@@ -940,7 +942,9 @@ export class MockBackend {
       case 'search_index_rebuild': {
         const jobId = crypto.randomUUID();
         const ch = a.onEvent as Channel<unknown>;
+        this.store(a.connectionId);
         setTimeout(() => {
+          this.indexed.add(a.connectionId);
           ch.onmessage({
             event: 'finished',
             data: {
@@ -970,13 +974,29 @@ export class MockBackend {
           byClass[k] = bytes;
           total += bytes;
         }
-        return {
-          source: total > 0 ? 'cloudwatch' : 'none',
-          asOf: iso(new Date(NOW.getTime() - 864e5)),
-          totalBytes: total,
-          objectCount: total > 0 ? b.objectCount : null,
-          byClass,
-        };
+        if (total > 0) {
+          return {
+            source: 'cloudwatch',
+            asOf: iso(new Date(NOW.getTime() - 864e5)),
+            totalBytes: total,
+            objectCount: b.objectCount,
+            byClass,
+          };
+        }
+        if (!this.indexed.has(a.connectionId)) {
+          return { source: 'none', asOf: null, totalBytes: 0, objectCount: null, byClass: {} };
+        }
+        // CloudWatch のメトリクスがなければインデックス（現行バージョン）から集計する
+        let count = 0;
+        for (const o of this.store(a.connectionId).values()) {
+          const v = this.current(o);
+          if (!v || v.deleteMarker || o.key.endsWith('/')) continue;
+          const size = v.size ?? 0;
+          byClass[v.storageClass] = (byClass[v.storageClass] ?? 0) + size;
+          total += size;
+          count += 1;
+        }
+        return { source: 'index', asOf: null, totalBytes: total, objectCount: count, byClass };
       }
       case 'cost_summary':
         this.bucket(a.connectionId);
