@@ -38,13 +38,9 @@ function statusText(o: {
   const selectedSet = new Set(o.selectionKeys);
   const selected = o.entries.filter((e) => selectedSet.has(e.key));
   const selectedBytes = selected.reduce((s, e) => s + (e.type === 'file' ? e.size : 0), 0);
-  const detail =
-    selected.length > 0
-      ? ja.list.selected(
-          selected.length,
-          selected.some((e) => e.type === 'file') ? formatSize(selectedBytes) : '',
-        )
-      : o.regionShort;
+  // 合計サイズはファイルを含むときだけ示す（フォルダだけならサイズは出さない）
+  const size = selected.some((e) => e.type === 'file') ? formatSize(selectedBytes) : '';
+  const detail = selected.length > 0 ? ja.list.selected(selected.length, size) : o.regionShort;
   const parts = [ja.list.items(o.total ?? o.entries.length), detail];
   if (o.tooMany) parts.push(ja.list.tooMany);
   return parts.join(' · ');
