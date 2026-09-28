@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-28
+
 ### 変更
 
 - 検索結果を一覧と同じ自然順（「file2」が「file10」より前）で並べ、1,000 件を超える結果も一覧の末尾まで表示すると続けて読み込むようにしました
@@ -45,5 +47,6 @@
 
 - Apple の公証を行っていないため、初回起動時に macOS に止められます。「システム設定」→「プライバシーとセキュリティ」で「このまま開く」を押してください（[08 §6.1](docs/design/08-cicd.md#61-利用者のインストール手順リリースノートに記載する)）。
 
-[Unreleased]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sh1gekicks/s3driveapp/releases/tag/v0.1.0

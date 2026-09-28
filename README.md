@@ -51,11 +51,11 @@ S3 Drive は、事前に用意した Amazon S3 のバケットを、Google ド�
 配布物が改ざんされていないことは、次のどちらかで確認できます。
 
 ```bash
-shasum -a 256 S3.Drive_0.1.0_universal.dmg
+shasum -a 256 S3.Drive_0.2.0_universal.dmg
 ```
 
 ```bash
-gh attestation verify S3.Drive_0.1.0_universal.dmg -R Sh1gekicks/s3driveapp
+gh attestation verify S3.Drive_0.2.0_universal.dmg -R Sh1gekicks/s3driveapp
 ```
 
 `shasum` の結果がリリースノートに記載した SHA-256 と一致すること、または `gh attestation verify` が成功することを確認してください。
