@@ -189,6 +189,22 @@ describe('インスペクタの 4 つの表示（03 §5.6）', () => {
     expect(await within(inspector()).findByText('text/markdown')).toBeInTheDocument();
   });
 
+  it('詳細を取得できないときは、スケルトンのままにせず理由と「再試行」を出す', async () => {
+    const user = userEvent.setup();
+    renderApp((b) =>
+      b.failNext('object_head', 'ACCESS_DENIED', 'この操作を行う権限がありません（s3:GetObject）'),
+    );
+    const l = await list();
+    await user.pointer({ keys: '[MouseLeft]', target: await within(l).findByText('README.md') });
+    const alert = await within(inspector()).findByRole('alert');
+    expect(alert).toHaveTextContent('この操作を行う権限がありません（s3:GetObject）');
+    // 作成日・Content-Type・暗号化は「—」
+    expect(within(inspector()).getAllByText('—')).toHaveLength(3);
+    await user.click(within(alert).getByRole('button', { name: '再試行' }));
+    expect(await within(inspector()).findByText('text/markdown')).toBeInTheDocument();
+    expect(within(inspector()).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('複数選択したときは件数と一括の操作', async () => {
     const user = userEvent.setup();
     renderApp();
