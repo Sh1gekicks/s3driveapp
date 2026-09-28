@@ -246,6 +246,44 @@ describe('ストレージとコスト（SCR-03）', () => {
     await waitFor(() => expect(backend.calls.filter((c) => c.cmd === 'cost_refresh')).toHaveLength(before));
   });
 
+  it('コスト配分タグがなければ、アカウント全体の S3 の金額であることを示す', async () => {
+    const user = userEvent.setup();
+    renderWithMock();
+    await within(await fileList()).findByText('logo.png');
+    act(() => handleCommand('go.dashboard'));
+    const [fetch] = await screen.findAllByRole('button', { name: '取得' });
+    await user.click(fetch as HTMLElement);
+    expect(await screen.findByText('アカウント全体の S3')).toBeInTheDocument();
+    expect(
+      screen.getByText(/ap-northeast-1 の S3 すべて（ほかのバケットを含む）の金額です/),
+    ).toBeInTheDocument();
+  });
+
+  it('コスト配分タグがあれば、そのタグが付いたバケットの合計として 0.001 ドル未満も示す', async () => {
+    renderWithMock({
+      before: (b) => {
+        b.costs.set('conn-tokyo', {
+          scope: { kind: 'tag', key: 'Name', value: 's3drive' },
+          month: '2026-09',
+          monthToDate: 0.00028738,
+          prevMonthSamePeriod: 0,
+          breakdown: { storage: 0, requests: 0.00028738, transfer: 0, retrieval: 0, other: 0 },
+          daily: Array.from({ length: 30 }, (_, i) => (i < 27 ? 0 : i === 27 ? 0.00028738 : null)),
+          forecastMonthEnd: null,
+          currency: 'USD',
+          fetchedAt: '2026-09-28T23:19:50Z',
+        });
+      },
+    });
+    await within(await fileList()).findByText('logo.png');
+    act(() => handleCommand('go.dashboard'));
+    expect(await screen.findByText('タグ Name=s3drive')).toBeInTheDocument();
+    // KPI・内訳のリクエスト・合計
+    expect(screen.getAllByText('$0.00029')).toHaveLength(3);
+    expect(screen.getByText(/同じタグのバケットが複数あれば合算します/)).toBeInTheDocument();
+    expect(screen.getByText(/^タグ Name=s3drive が付いた S3/)).toBeInTheDocument();
+  });
+
   it('CloudWatch のメトリクスもインデックスもなければ、インデックスを作成して集計する', async () => {
     const user = userEvent.setup();
     renderWithMock({

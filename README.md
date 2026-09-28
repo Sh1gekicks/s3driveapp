@@ -69,7 +69,7 @@ gh attestation verify S3.Drive_0.2.0_universal.dmg -R Sh1gekicks/s3driveapp
 | S3 バケット | 接続先のバケット。削除したファイルを復元するには、バージョニングを有効にしてください |
 | IAM ユーザ | アクセスキーを発行済みの IAM ユーザ。付与する権限は [07 §4 IAM ポリシー](docs/design/07-security.md#4-iam-ポリシー) を参照してください |
 | IAM ロール（任意） | AssumeRole で使うロール。使う場合は IAM ユーザに `sts:AssumeRole` を許可します（[07 §4.2](docs/design/07-security.md#42-iam-ユーザのポリシーassumerole-を使う場合)） |
-| Cost Explorer（任意） | コストを表示する場合は、アカウントで Cost Explorer を有効にします。バケット単位のコストを表示するには、バケットにコスト配分タグを付けて有効にします |
+| Cost Explorer（任意） | コストを表示する場合は、アカウントで Cost Explorer を有効にします。バケット単位のコストを表示するには、バケットごとに異なる値のタグを付けて Billing でコスト配分タグとして有効にし、アプリの設定（コスト）で接続ごとにそのタグを指定します |
 
 推奨する設定（ライフサイクルルールなど）は [設計書 §5](docs/design/README.md#5-前提条件制約) を参照してください。
 

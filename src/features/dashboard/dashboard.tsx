@@ -323,15 +323,23 @@ export function Dashboard({ connection }: { connection: Connection }) {
             loading={cost.isPending && ceEnabled}
             value={c ? formatUsd(c.monthToDate) : ja.common.none}
             sub={
-              delta != null ? (
-                <span>
-                  {t.vsLastMonth}{' '}
-                  <span className={cn('font-medium', delta > 0 ? 'text-destructive' : 'text-success')}>
-                    {formatDelta(delta)}
+              c ? (
+                // 狭い幅では対象範囲と前月比を別の行にする
+                <span className="flex flex-wrap gap-x-2">
+                  <span className="max-w-full truncate">
+                    {c.scope.kind === 'tag'
+                      ? t.scopeTagShort(c.scope.key, c.scope.value)
+                      : t.scopeAccountShort}
                   </span>
+                  {delta != null ? (
+                    <span className="whitespace-nowrap">
+                      {t.vsLastMonth}{' '}
+                      <span className={cn('font-medium', delta > 0 ? 'text-destructive' : 'text-success')}>
+                        {formatDelta(delta)}
+                      </span>
+                    </span>
+                  ) : null}
                 </span>
-              ) : c ? (
-                ja.common.none
               ) : ceEnabled ? (
                 t.notFetched
               ) : (
@@ -415,6 +423,11 @@ export function Dashboard({ connection }: { connection: Connection }) {
                   <span>{t.total}</span>
                   <span className="tabular-nums">{formatUsd(c.monthToDate)}</span>
                 </div>
+                <p className="m-0 mt-2 text-xs text-muted-foreground">
+                  {c.scope.kind === 'tag'
+                    ? t.scopeTagHint(c.scope.key, c.scope.value)
+                    : t.scopeAccountHint(c.scope.region)}
+                </p>
               </div>
             ) : cost.isPending && ceEnabled ? (
               <Skeleton className="h-32" />
