@@ -25,6 +25,31 @@ import { FilterBar, SearchStatus } from './toolbar';
 /** 1 つのフォルダの項目がこれを超えたら、ステータスバーで検索を勧める（04 §3.5）。 */
 const MANY_ITEMS = 100_000;
 
+/** ステータスバーの文言（03 §5.4）: 「{件数} 項目」に、選択中なら選択の件数と合計サイズ、それ以外はリージョン。 */
+function statusText(o: {
+  entries: Entry[];
+  selectionKeys: string[];
+  total: number | null;
+  regionShort: string;
+  loadingMore: boolean;
+  tooMany: boolean;
+}): string {
+  if (o.loadingMore) return ja.list.loadingMore(o.entries.length);
+  const selectedSet = new Set(o.selectionKeys);
+  const selected = o.entries.filter((e) => selectedSet.has(e.key));
+  const selectedBytes = selected.reduce((s, e) => s + (e.type === 'file' ? e.size : 0), 0);
+  const detail =
+    selected.length > 0
+      ? ja.list.selected(
+          selected.length,
+          selected.some((e) => e.type === 'file') ? formatSize(selectedBytes) : '',
+        )
+      : o.regionShort;
+  const parts = [ja.list.items(o.total ?? o.entries.length), detail];
+  if (o.tooMany) parts.push(ja.list.tooMany);
+  return parts.join(' · ');
+}
+
 export function Browser({ connection, narrow }: { connection: Connection; narrow: boolean }) {
   const queryClient = useQueryClient();
   const prefix = useNavStore((s) => s.prefix);
@@ -82,24 +107,14 @@ export function Browser({ connection, narrow }: { connection: Connection; narrow
       .catch((e) => showError(e, '検索インデックスを更新'));
   };
 
-  // ステータスバー
-  const selectedSet = new Set(selectionKeys);
-  const selected = entries.filter((e) => selectedSet.has(e.key));
-  const selectedBytes = selected.reduce((s, e) => s + (e.type === 'file' ? e.size : 0), 0);
-  const parts = [ja.list.items(total ?? entries.length)];
-  if (selected.length > 0) {
-    parts.push(
-      ja.list.selected(
-        selected.length,
-        selected.some((e) => e.type === 'file') ? formatSize(selectedBytes) : '',
-      ),
-    );
-  } else {
-    parts.push(connection.regionShort);
-  }
-  let status = parts.join(' · ');
-  if (!searching && listing.hasNextPage) status = ja.list.loadingMore(entries.length);
-  else if (!searching && entries.length >= MANY_ITEMS) status = `${status} · ${ja.list.tooMany}`;
+  const status = statusText({
+    entries,
+    selectionKeys,
+    total,
+    regionShort: connection.regionShort,
+    loadingMore: !searching && listing.hasNextPage,
+    tooMany: !searching && entries.length >= MANY_ITEMS,
+  });
 
   return (
     <>

@@ -55,9 +55,8 @@ export function nextSearchOffset(pages: SearchResult[]): number | undefined {
   if (!first) return 0;
   const files = pages.reduce((n, p) => n + p.entries.filter((r) => r.entry.type === 'file').length, 0);
   const folders = first.entries.filter((r) => r.entry.type === 'folder').length;
-  const last = pages[pages.length - 1];
   // 最後のページが空なら、件数が変わっても続きはない
-  if (pages.length > 1 && last && last.entries.length === 0) return undefined;
+  if (pages.length > 1 && pages.at(-1)?.entries.length === 0) return undefined;
   return files < first.total - folders ? files : undefined;
 }
 

@@ -39,10 +39,17 @@ export function resetScreen() {
   window.HTMLElement.prototype.scrollTo = () => {};
   Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 800 });
   Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 1000 });
+  // 寸法は上で固定しているため、変化を知らせる必要はない（何もしない）
   globalThis.ResizeObserver ??= class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
+    observe() {
+      // 何もしない
+    }
+    unobserve() {
+      // 何もしない
+    }
+    disconnect() {
+      // 何もしない
+    }
   } as unknown as typeof ResizeObserver;
 }
 
