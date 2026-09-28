@@ -545,36 +545,49 @@ async fn delete_job(
         .collect()
         .await;
 
-    let mut result = BatchResult::default();
-    let mut removed = BTreeSet::new();
+    let (result, removed) = tally_deletions(outcomes);
+    search::remove(&core.0.db, connection_id, removed).await?;
+    Ok(result)
+}
+
+/// `DeleteObjects` の結果をキーごとにまとめる。全バージョンの削除では 1 つのキーに複数の識別子
+/// （バージョン・削除マーカー）があるため、件数はバージョンではなくキーで数える（DLG-02 の「{n} 項目」）。
+/// すべての識別子を削除できたキーを成功とし、インデックスから取り除くキーとして返す。
+fn tally_deletions(
+    outcomes: Vec<(Vec<VersionedKey>, CoreResult<Vec<KeyError>>)>,
+) -> (BatchResult, Vec<String>) {
+    let mut keys = BTreeSet::new();
+    let mut failed: std::collections::BTreeMap<String, CoreError> = Default::default();
+    let mut canceled = BTreeSet::new();
     for (chunk, r) in outcomes {
+        keys.extend(chunk.iter().map(|(k, _)| k.clone()));
         match r {
             Ok(errors) => {
-                let failed: BTreeSet<&str> = errors.iter().map(|(k, _)| k.as_str()).collect();
-                for (k, _) in &chunk {
-                    if !failed.contains(k.as_str()) {
-                        removed.insert(k.clone());
-                    }
-                }
-                result.succeeded += (chunk.len() - errors.len()) as u64;
                 for (k, e) in errors {
-                    result.fail(k, e);
+                    failed.entry(k).or_insert(e);
                 }
             }
-            Err(e) if e.is_canceled() => {
-                for (k, _) in chunk {
-                    result.skip(k, "キャンセルしました");
-                }
-            }
+            Err(e) if e.is_canceled() => canceled.extend(chunk.into_iter().map(|(k, _)| k)),
             Err(e) => {
                 for (k, _) in chunk {
-                    result.fail(k, e.clone());
+                    failed.entry(k).or_insert_with(|| e.clone());
                 }
             }
         }
     }
-    search::remove(&core.0.db, connection_id, removed.into_iter().collect()).await?;
-    Ok(result)
+    let mut result = BatchResult::default();
+    let mut removed = Vec::new();
+    for k in keys {
+        if let Some(e) = failed.remove(&k) {
+            result.fail(k, e);
+        } else if canceled.contains(&k) {
+            result.skip(k, "キャンセルしました");
+        } else {
+            result.succeeded += 1;
+            removed.push(k);
+        }
+    }
+    (result, removed)
 }
 
 /// `DeleteObjects`（1 リクエスト 1,000 件、Quiet）。失敗した項目を返す。
@@ -637,6 +650,30 @@ mod tests {
     use crate::jobs::MemorySink;
 
     #[test]
+    fn counts_deletions_by_key_not_by_version() {
+        let v = |k: &str, id: &str| (k.to_string(), Some(id.to_string()));
+        let outcomes = vec![
+            (
+                vec![v("a.txt", "1"), v("a.txt", "2"), v("b.txt", "1")],
+                Ok(vec![(
+                    "b.txt".to_string(),
+                    CoreError::new(ErrorCode::ObjectLocked),
+                )]),
+            ),
+            (vec![v("a.txt", "3"), v("c.txt", "1")], Ok(vec![])),
+            (vec![v("d.txt", "1")], Err(CoreError::canceled())),
+        ];
+        let (result, removed) = tally_deletions(outcomes);
+        // a.txt の 3 つのバージョンは 1 項目として数える
+        assert_eq!(result.succeeded, 2);
+        assert_eq!(removed, vec!["a.txt".to_string(), "c.txt".to_string()]);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].key, "b.txt");
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(result.skipped[0].key, "d.txt");
+    }
+
+    #[test]
     fn maps_folder_contents_to_the_new_root() {
         let keys = vec![
             "a/b/".to_string(),
@@ -666,6 +703,53 @@ mod tests {
             BatchEvent::Progress(p) => assert_eq!((p.done, p.total), (100, Some(100))),
             _ => panic!(),
         }
+    }
+
+    #[tokio::test]
+    async fn reports_keys_that_delete_objects_could_not_delete() {
+        use aws_sdk_s3::operation::delete_objects::DeleteObjectsOutput;
+        use aws_sdk_s3::types::{DeletedObject, Error as S3Error};
+        use aws_smithy_mocks::{RuleMode, mock, mock_client};
+
+        // DeleteObjects は一部の項目だけ失敗しても 200 を返し、失敗を Errors に入れる（04 §6.3）
+        let rule = mock!(aws_sdk_s3::Client::delete_objects).then_output(|| {
+            DeleteObjectsOutput::builder()
+                .deleted(DeletedObject::builder().key("a.txt").build())
+                .errors(
+                    S3Error::builder()
+                        .key("b.txt")
+                        .code("AccessDenied")
+                        .message("Access Denied")
+                        .build(),
+                )
+                .build()
+        });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&rule]);
+        let (core, _dir) = Core::for_tests(None).unwrap();
+        core.with_test_connection(crate::connections::ConnCtx::for_tests("k1", "b", s3))
+            .await;
+        let sink = Arc::new(MemorySink::<BatchEvent>::default());
+        core.objects()
+            .delete(
+                "k1",
+                vec![Target::file("a.txt"), Target::file("b.txt")],
+                false,
+                sink.clone(),
+            )
+            .await
+            .unwrap();
+        let result = loop {
+            if let Some(BatchEvent::Finished(f)) = sink.events().into_iter().last() {
+                break f.result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        assert_eq!(result.succeeded, 1);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].key, "b.txt");
+        assert_eq!(result.failed[0].error.code, ErrorCode::AccessDenied);
+        // 必要な権限を示す（04 §6.3）
+        assert!(result.failed[0].error.message.contains("s3:DeleteObject"));
     }
 
     #[tokio::test]

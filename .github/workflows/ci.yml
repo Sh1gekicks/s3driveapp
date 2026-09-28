@@ -26,8 +26,32 @@ jobs:
           require-lockfile: true
       - run: pnpm biome ci .
       - run: pnpm typecheck
+      # lib と features の行カバレッジが 70% を下回ったら失敗する（vite.config.ts の thresholds。09 §1）
       - run: pnpm vitest run --coverage
       - run: pnpm vite build
+
+  ui:
+    # モックバックエンドでの画面テストとビジュアル回帰テスト（09 §2.4、§2.6）。
+    # 基準画像と同じ描画にするため、Playwright の公式イメージ（@playwright/test と同じ版）で実行する
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          cache: true
+          require-lockfile: true
+      - run: pnpm exec playwright test
+      - name: レポートの保存
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
 
   core:
     runs-on: ubuntu-latest
@@ -43,18 +67,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-llvm-cov
       - run: cargo fmt --all --check
-      - run: cargo clippy -p s3drive-core --all-targets --locked -- -D warnings
-      # 単体テストと moto を使う結合テスト。ts-rs の型定義もここで書き出される
-      - run: cargo test -p s3drive-core --locked
+      # ベンチマーク（features = bench）も含めて検査する
+      - run: cargo clippy -p s3drive-core --all-targets --all-features --locked -- -D warnings
+      # 単体テストと moto を使う結合テスト。行カバレッジが 80% を下回ったら失敗する（09 §1）。
+      # ts-rs の型定義もここで書き出される
+      - run: cargo llvm-cov -p s3drive-core --locked --fail-under-lines 80
       - name: 型定義（ts-rs）に差分がないことの確認
         run: git diff --exit-code -- src/lib/ipc/bindings
 
   app:
     runs-on: macos-latest
-    needs: [frontend, core]
+    needs: [frontend, ui, core]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0

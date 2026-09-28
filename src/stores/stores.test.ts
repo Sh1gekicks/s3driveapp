@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { SearchEntry, SearchResult } from '@/lib/ipc';
 import { parentPrefix, useNavStore } from './nav';
-import { filterCount, NO_FILTERS, toSearchQuery, useUiStore } from './ui';
+import { filterCount, NO_FILTERS, nextSearchOffset, toSearchQuery, useUiStore } from './ui';
 
 describe('useNavStore（戻る／進む）', () => {
   beforeEach(() => useNavStore.getState().openConnection('c1'));
@@ -112,5 +113,43 @@ describe('検索条件（04 §10.2）', () => {
         { key: 'size', dir: -1 },
       ),
     ).toMatchObject({ kind: 'pdf', ext: 'pdf', size: 'lt1', date: '7d', storageClass: 'GLACIER' });
+  });
+
+  describe('結果の続きの取得（1,000 件ずつ）', () => {
+    const file = (key: string): SearchEntry => ({
+      entry: {
+        type: 'file',
+        key,
+        name: key,
+        size: 1,
+        lastModified: '2026-09-27T00:00:00Z',
+        etag: 'e',
+        storageClass: 'STANDARD',
+        restore: { state: 'notArchived' },
+        deleted: false,
+      },
+      parent: '',
+    });
+    const folder = (key: string): SearchEntry => ({
+      entry: { type: 'folder', key, name: key, lastModified: null, deleted: false },
+      parent: '',
+    });
+    const page = (entries: SearchEntry[], total: number): SearchResult => ({
+      entries,
+      total,
+      index: { state: 'ready', objectCount: 0, lastScanAt: null, sizeBytes: 0, progress: null },
+    });
+
+    it('フォルダは最初のページにだけ含まれるため、読み込んだファイルの件数を次の offset にする', () => {
+      // フォルダ 2 件 + ファイル 3 件のうち、最初のページでファイル 2 件
+      const first = page([folder('a/'), folder('b/'), file('1'), file('2')], 5);
+      expect(nextSearchOffset([first])).toBe(2);
+      expect(nextSearchOffset([first, page([file('3')], 5)])).toBeUndefined();
+    });
+
+    it('すべて読み込んだ・空のページが返ったら終わり', () => {
+      expect(nextSearchOffset([page([file('1')], 1)])).toBeUndefined();
+      expect(nextSearchOffset([page([file('1')], 3), page([], 3)])).toBeUndefined();
+    });
   });
 });

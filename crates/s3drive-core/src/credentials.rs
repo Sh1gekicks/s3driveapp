@@ -2,11 +2,13 @@
 //!
 //! シークレットはキーチェーンにのみ保存し（`aws:{認証情報 ID}` に JSON）、IPC・ログには出さない。
 
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::{self, ProvideCredentials, error::CredentialsError};
+use aws_smithy_runtime_api::client::interceptors::context::InterceptorContext;
+use aws_smithy_runtime_api::client::retries::classifiers::{ClassifyRetry, RetryAction};
 use serde::{Deserialize, Serialize};
 
 use crate::aws::error_map::{self, Ctx};
@@ -143,13 +145,29 @@ pub struct AssumeRoleParams {
     pub duration: Duration,
 }
 
-/// AssumeRole で一時認証情報を得るプロバイダ。期限前の再取得は SDK の ID キャッシュに任せる（04 §2.3）。
+/// 一時認証情報の期限がこの時間より近ければ、使わずに取り直す。
+const REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(5 * 60);
+/// 取り直してからこの時間内に `ExpiredToken` が返った場合は、取り直しても解決しないため再試行しない。
+const JUST_REFRESHED: Duration = Duration::from_secs(60);
+
+/// 取得済みの一時認証情報（取得した時刻とともに保持する）。
+#[derive(Default)]
+struct RoleCache {
+    current: Mutex<Option<(Credentials, Instant)>>,
+    /// 同時に要求が来ても AssumeRole を 1 回にまとめる。
+    refresh: tokio::sync::Mutex<()>,
+}
+
+/// AssumeRole で一時認証情報を得るプロバイダ（04 §2.3）。
 ///
-/// SDK の `AssumeRoleProvider` は `SourceIdentity` を指定できないため、自前で実装する。
+/// - SDK の `AssumeRoleProvider` は `SourceIdentity` を指定できないため、自前で実装する。
+/// - 一時認証情報はこのプロバイダがキャッシュし、期限の 5 分前に取り直す。`ExpiredToken` が返ったときに
+///   キャッシュを捨てて取り直せるよう、SDK の ID キャッシュは使わない（[`ExpiredTokenRetry`]。01 §7.1）。
 #[derive(Clone)]
 pub struct AssumeRoleCredentials {
     sts: aws_sdk_sts::Client,
     params: Arc<AssumeRoleParams>,
+    cache: Arc<RoleCache>,
 }
 
 impl std::fmt::Debug for AssumeRoleCredentials {
@@ -165,10 +183,56 @@ impl AssumeRoleCredentials {
         Self {
             sts,
             params: Arc::new(params),
+            cache: Arc::new(RoleCache::default()),
         }
     }
 
-    /// 一時認証情報を取得する。接続の確認では、このエラーを `ROLE_ASSUME_DENIED` として表示する。
+    /// キャッシュした一時認証情報を返す。なければ（期限が近ければ）AssumeRole で取り直す。
+    pub async fn credentials(&self) -> CoreResult<Credentials> {
+        if let Some(c) = self.cached() {
+            return Ok(c);
+        }
+        let _refreshing = self.cache.refresh.lock().await;
+        if let Some(c) = self.cached() {
+            return Ok(c);
+        }
+        let c = self.assume().await?;
+        *self.cache.current.lock().unwrap() = Some((c.clone(), Instant::now()));
+        Ok(c)
+    }
+
+    /// テスト用。キャッシュした一時認証情報を、`age` だけ前に取得したことにする。
+    #[cfg(test)]
+    fn age_cache(&self, age: Duration) {
+        if let Some((_, fetched)) = self.cache.current.lock().unwrap().as_mut() {
+            *fetched -= age;
+        }
+    }
+
+    fn cached(&self) -> Option<Credentials> {
+        let current = self.cache.current.lock().unwrap();
+        let (c, _) = current.as_ref()?;
+        c.expiry()
+            .is_none_or(|e| e > SystemTime::now() + REFRESH_BEFORE_EXPIRY)
+            .then(|| c.clone())
+    }
+
+    /// `ExpiredToken` を受け取ったときに呼ぶ。キャッシュを捨てて次の試行で取り直す場合は真を返す。
+    ///
+    /// 取り直した直後の認証情報でも拒否された場合（時刻のずれなど）は、何度取り直しても解決しないため偽を返す。
+    /// これにより、1 つの要求の再試行は 1 回に限られる（01 §7.1）。
+    pub fn on_expired_token(&self) -> bool {
+        let mut current = self.cache.current.lock().unwrap();
+        match current.as_ref() {
+            Some((_, fetched)) if fetched.elapsed() < JUST_REFRESHED => false,
+            _ => {
+                *current = None;
+                true
+            }
+        }
+    }
+
+    /// 一時認証情報を取得する（キャッシュしない）。接続の確認では、このエラーを `ROLE_ASSUME_DENIED` として表示する。
     pub async fn assume(&self) -> CoreResult<Credentials> {
         let p = &self.params;
         let out = self
@@ -202,10 +266,48 @@ impl ProvideCredentials for AssumeRoleCredentials {
         Self: 'a,
     {
         provider::future::ProvideCredentials::new(async move {
-            self.assume()
+            self.credentials()
                 .await
                 .map_err(CredentialsError::provider_error)
         })
+    }
+}
+
+/// `ExpiredToken` が返ったら一時認証情報を取り直し、1 回だけ再試行させるリトライ分類器（01 §7.1）。
+///
+/// AssumeRole を使う接続の各クライアントに登録する。静的なアクセスキーは期限切れにならないため登録しない。
+#[derive(Clone, Debug)]
+pub struct ExpiredTokenRetry(AssumeRoleCredentials);
+
+impl ExpiredTokenRetry {
+    pub fn new(credentials: AssumeRoleCredentials) -> Self {
+        Self(credentials)
+    }
+}
+
+impl ClassifyRetry for ExpiredTokenRetry {
+    fn classify_retry(&self, ctx: &InterceptorContext) -> RetryAction {
+        if !matches!(ctx.output_or_error(), Some(Err(_))) {
+            return RetryAction::NoActionIndicated;
+        }
+        let Some(response) = ctx.response() else {
+            return RetryAction::NoActionIndicated;
+        };
+        let expired = error_map::is_expired_token_response(
+            response.status().as_u16(),
+            response.headers().get("x-amzn-errortype"),
+            response.body().bytes(),
+        );
+        if expired && self.0.on_expired_token() {
+            log::info!("一時認証情報の期限が切れたため、取り直して再試行します");
+            RetryAction::transient_error()
+        } else {
+            RetryAction::NoActionIndicated
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "ExpiredTokenRetry"
     }
 }
 
@@ -268,6 +370,136 @@ mod tests {
         assert!(!is_valid_role_arn("arn:aws:iam::12345:role/x"));
         assert!(!is_valid_role_arn("arn:aws:iam::123456789012:user/x"));
         assert!(!is_valid_role_arn("arn:aws:s3:::bucket"));
+    }
+
+    mod expired_token {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use aws_credential_types::provider::SharedCredentialsProvider;
+        use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
+        use aws_sdk_sts::operation::assume_role::AssumeRoleOutput;
+        use aws_smithy_mocks::{Rule, RuleMode, mock, mock_client};
+        use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+        use aws_smithy_runtime_api::http::StatusCode;
+        use aws_smithy_types::body::SdkBody;
+        use aws_smithy_types::retry::RetryConfig;
+
+        use super::*;
+        use crate::aws::error_map::{self, Ctx};
+
+        static ISSUED: AtomicUsize = AtomicUsize::new(0);
+
+        /// AssumeRole のたびに別のアクセスキーを返す STS。
+        fn role() -> (AssumeRoleCredentials, Rule) {
+            let rule = mock!(aws_sdk_sts::Client::assume_role).then_output(|| {
+                let n = ISSUED.fetch_add(1, Ordering::SeqCst);
+                AssumeRoleOutput::builder()
+                    .credentials(
+                        aws_sdk_sts::types::Credentials::builder()
+                            .access_key_id(format!("ASIATEMP{n}"))
+                            .secret_access_key("temp-secret")
+                            .session_token("temp-token")
+                            .expiration(aws_smithy_types::DateTime::from(
+                                SystemTime::now() + Duration::from_secs(3600),
+                            ))
+                            .build()
+                            .unwrap(),
+                    )
+                    .build()
+            });
+            let sts = mock_client!(aws_sdk_sts, RuleMode::MatchAny, [&rule]);
+            let creds = AssumeRoleCredentials::new(
+                sts,
+                AssumeRoleParams {
+                    role_arn: "arn:aws:iam::123456789012:role/S3DriveAccess".into(),
+                    session_name: "s3drive-test".into(),
+                    external_id: None,
+                    source_identity: None,
+                    duration: Duration::from_secs(3600),
+                },
+            );
+            (creds, rule)
+        }
+
+        fn expired() -> HttpResponse {
+            HttpResponse::new(
+                StatusCode::try_from(400).unwrap(),
+                SdkBody::from(
+                    "<Error><Code>ExpiredToken</Code><Message>The provided token has expired.</Message></Error>",
+                ),
+            )
+        }
+
+        /// 接続のクライアントと同じ構成（ID キャッシュなし、分類器あり）の S3 クライアント。
+        fn s3(role: &AssumeRoleCredentials, rule: &Rule) -> aws_sdk_s3::Client {
+            let role = role.clone();
+            mock_client!(aws_sdk_s3, RuleMode::Sequential, [rule], move |b| b
+                .credentials_provider(SharedCredentialsProvider::new(role.clone()))
+                .identity_cache(aws_config::identity::IdentityCache::no_cache())
+                .retry_config(
+                    RetryConfig::standard()
+                        .with_max_attempts(3)
+                        .with_initial_backoff(Duration::from_millis(1))
+                )
+                .retry_classifier(ExpiredTokenRetry::new(role.clone())))
+        }
+
+        #[tokio::test]
+        async fn refreshes_credentials_and_retries_once() {
+            let (role, sts) = role();
+            // 50 分前に取得した一時認証情報が、時刻のずれなどで期限切れと判定された
+            role.credentials().await.unwrap();
+            role.age_cache(Duration::from_secs(50 * 60));
+            let list = mock!(aws_sdk_s3::Client::list_objects_v2)
+                .sequence()
+                .http_response(expired)
+                .output(|| ListObjectsV2Output::builder().key_count(0).build())
+                .build();
+            let out = s3(&role, &list)
+                .list_objects_v2()
+                .bucket("b")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(out.key_count(), Some(0));
+            // 最初の取得と、ExpiredToken を受けての取り直し
+            assert_eq!(sts.num_calls(), 2);
+            assert_eq!(list.num_calls(), 2);
+        }
+
+        #[tokio::test]
+        async fn does_not_retry_again_with_fresh_credentials() {
+            let (role, sts) = role();
+            role.credentials().await.unwrap();
+            role.age_cache(Duration::from_secs(50 * 60));
+            let list = mock!(aws_sdk_s3::Client::list_objects_v2)
+                .sequence()
+                .http_response(expired)
+                .repeatedly()
+                .build();
+            let err = s3(&role, &list)
+                .list_objects_v2()
+                .bucket("b")
+                .send()
+                .await
+                .unwrap_err();
+            // 取り直した直後の認証情報でも拒否されたら、それ以上は再試行しない
+            assert_eq!(list.num_calls(), 2);
+            assert_eq!(sts.num_calls(), 2);
+            assert_eq!(
+                error_map::classify(&err, Ctx::Op("s3:ListBucket")).code,
+                ErrorCode::CredentialsExpired
+            );
+        }
+
+        #[tokio::test]
+        async fn caches_credentials_until_shortly_before_expiry() {
+            let (role, sts) = role();
+            let a = role.credentials().await.unwrap();
+            let b = role.credentials().await.unwrap();
+            assert_eq!(a.access_key_id(), b.access_key_id());
+            assert_eq!(sts.num_calls(), 1);
+        }
     }
 
     #[test]

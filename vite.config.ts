@@ -42,6 +42,11 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/lib/**', 'src/features/**', 'src/stores/**'],
       exclude: ['src/lib/ipc/bindings/**', 'src/lib/ipc/mock/**', '**/*.test.*'],
+      // lib と features は行カバレッジ 70% 以上（09 §1）。下回ったら CI を失敗させる
+      thresholds: {
+        'src/lib/**': { lines: 70 },
+        'src/features/**': { lines: 70 },
+      },
     },
   },
 });

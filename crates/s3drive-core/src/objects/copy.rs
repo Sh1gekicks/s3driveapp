@@ -184,3 +184,162 @@ async fn multipart_copy(ctx: &ConnCtx, spec: CopySpec<'_>) -> CoreResult<()> {
     }
     finished
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    use aws_sdk_s3::operation::complete_multipart_upload::CompleteMultipartUploadOutput;
+    use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadOutput;
+    use aws_sdk_s3::operation::get_object_tagging::GetObjectTaggingOutput;
+    use aws_sdk_s3::operation::upload_part_copy::UploadPartCopyOutput;
+    use aws_sdk_s3::types::{CopyPartResult, Tag};
+    use aws_smithy_mocks::{RuleMode, mock, mock_client};
+
+    use super::*;
+    use crate::model::RestoreState;
+
+    fn source(size: u64) -> HeadInfo {
+        HeadInfo {
+            size,
+            content_type: "video/quicktime".into(),
+            last_modified: "2026-09-27T00:00:00Z".into(),
+            etag: "e".into(),
+            storage_class: StorageClass::StandardIa,
+            version_id: None,
+            sse: Some("aws:kms".into()),
+            kms_key_id: Some("key-1".into()),
+            metadata: BTreeMap::from([(
+                "s3drive-mtime".to_string(),
+                "2026-01-01T00:00:00Z".to_string(),
+            )]),
+            restore: RestoreState::NotArchived,
+            checksums: BTreeMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn copies_objects_over_5_gb_in_parts_with_metadata_and_tags() {
+        // 5 GB を超えると CopyObject が使えないため、UploadPartCopy で分割してコピーする（04 §7.3、D6）
+        let tagging = mock!(aws_sdk_s3::Client::get_object_tagging).then_output(|| {
+            GetObjectTaggingOutput::builder()
+                .tag_set(Tag::builder().key("team").value("media").build().unwrap())
+                .build()
+                .unwrap()
+        });
+        // マルチパートコピーではメタデータ・タグ・クラス・暗号化が引き継がれないため、明示する
+        let create = mock!(aws_sdk_s3::Client::create_multipart_upload)
+            .match_requests(|r| {
+                r.key() == Some("dest/big.mov")
+                    && r.storage_class() == Some(&StorageClass::StandardIa.to_sdk())
+                    && r.content_type() == Some("video/quicktime")
+                    && r.metadata().and_then(|m| m.get("s3drive-mtime")).is_some()
+                    && r.tagging() == Some("team=media")
+                    && r.ssekms_key_id() == Some("key-1")
+            })
+            .then_output(|| {
+                CreateMultipartUploadOutput::builder()
+                    .upload_id("u1")
+                    .build()
+            });
+        let ranges = Arc::new(Mutex::new(Vec::new()));
+        let seen = ranges.clone();
+        let part = mock!(aws_sdk_s3::Client::upload_part_copy).then_compute_output(move |r| {
+            seen.lock().unwrap().push((
+                r.part_number().unwrap(),
+                r.copy_source_range().unwrap().to_string(),
+            ));
+            UploadPartCopyOutput::builder()
+                .copy_part_result(
+                    CopyPartResult::builder()
+                        .e_tag(format!("\"p{}\"", r.part_number().unwrap()))
+                        .build(),
+                )
+                .build()
+        });
+        let complete = mock!(aws_sdk_s3::Client::complete_multipart_upload)
+            .match_requests(|r| {
+                r.upload_id() == Some("u1")
+                    && r.multipart_upload().is_some_and(|m| m.parts().len() == 12)
+            })
+            .then_output(|| CompleteMultipartUploadOutput::builder().build());
+        let s3 = mock_client!(
+            aws_sdk_s3,
+            RuleMode::MatchAny,
+            [&tagging, &create, &part, &complete]
+        );
+        let ctx = ConnCtx::for_tests("k1", "b", s3);
+        let size = 6 * 1024 * 1024 * 1024u64;
+        let info = source(size);
+        copy(
+            &ctx,
+            CopySpec {
+                src_key: "src/big.mov",
+                src_version: None,
+                dest_key: "dest/big.mov",
+                storage_class: info.storage_class,
+                source: &info,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(complete.num_calls(), 1);
+        let mut ranges = ranges.lock().unwrap().clone();
+        ranges.sort();
+        assert_eq!(ranges.len(), 12);
+        assert_eq!(ranges[0], (1, format!("bytes=0-{}", COPY_PART_SIZE - 1)));
+        assert_eq!(
+            ranges[11].1,
+            format!("bytes={}-{}", 11 * COPY_PART_SIZE, size - 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn aborts_the_multipart_copy_when_a_part_fails() {
+        let tagging = mock!(aws_sdk_s3::Client::get_object_tagging).then_output(|| {
+            GetObjectTaggingOutput::builder()
+                .set_tag_set(Some(vec![]))
+                .build()
+                .unwrap()
+        });
+        let create = mock!(aws_sdk_s3::Client::create_multipart_upload).then_output(|| {
+            CreateMultipartUploadOutput::builder()
+                .upload_id("u1")
+                .build()
+        });
+        let part = mock!(aws_sdk_s3::Client::upload_part_copy).then_http_response(|| {
+            aws_smithy_runtime_api::client::orchestrator::HttpResponse::new(
+                aws_smithy_runtime_api::http::StatusCode::try_from(403).unwrap(),
+                aws_smithy_types::body::SdkBody::from("<Error><Code>AccessDenied</Code></Error>"),
+            )
+        });
+        let abort = mock!(aws_sdk_s3::Client::abort_multipart_upload)
+            .match_requests(|r| r.upload_id() == Some("u1"))
+            .then_output(|| {
+                aws_sdk_s3::operation::abort_multipart_upload::AbortMultipartUploadOutput::builder()
+                    .build()
+            });
+        let s3 = mock_client!(
+            aws_sdk_s3,
+            RuleMode::MatchAny,
+            [&tagging, &create, &part, &abort]
+        );
+        let ctx = ConnCtx::for_tests("k1", "b", s3);
+        let info = source(6 * 1024 * 1024 * 1024);
+        let err = copy(
+            &ctx,
+            CopySpec {
+                src_key: "src/big.mov",
+                src_version: None,
+                dest_key: "dest/big.mov",
+                storage_class: info.storage_class,
+                source: &info,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, crate::ErrorCode::AccessDenied);
+        assert_eq!(abort.num_calls(), 1);
+    }
+}

@@ -35,7 +35,20 @@ fn init_connection(conn: &mut Connection) -> rusqlite::Result<()> {
          PRAGMA foreign_keys = ON;
          PRAGMA busy_timeout = 5000;
          PRAGMA synchronous = NORMAL;",
-    )
+    )?;
+    // 検索結果を一覧と同じ自然順（数字は数値として比べる）で並べる（04 §10.2）
+    conn.create_collation("NATURAL_ORDER", crate::util::natural_cmp)
+}
+
+/// ベンチマーク用（09 §5）。マイグレーションを適用した接続を開く。
+#[cfg(feature = "bench")]
+pub(crate) fn open_for_bench(path: &Path) -> Connection {
+    let mut conn = Connection::open(path).unwrap();
+    init_connection(&mut conn).unwrap();
+    Migrations::from_slice(MIGRATIONS)
+        .to_latest(&mut conn)
+        .unwrap();
+    conn
 }
 
 impl Db {

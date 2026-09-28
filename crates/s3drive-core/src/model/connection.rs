@@ -148,6 +148,9 @@ pub struct BucketInfo {
     pub region: String,
     pub versioning: Versioning,
     pub encryption: String,
+    /// HeadBucket の応答（301 と `x-amz-bucket-region`）から接続のリージョンを修正した（01 §6.1）。
+    #[serde(default)]
+    pub region_corrected: bool,
 }
 
 #[cfg(test)]

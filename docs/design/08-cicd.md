@@ -20,10 +20,10 @@ flowchart LR
 
 | ファイル | トリガー | 内容 | ランナー |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | pull_request、main への push | 静的解析、型検査、単体テスト、S3 モック（moto）を使う結合テスト、型定義の差分確認、脆弱性検査、macOS でのビルド確認 | ubuntu-latest、macos-latest |
+| `.github/workflows/ci.yml` | pull_request、main への push | 静的解析、型検査、単体テスト（カバレッジの閾値あり）、画面テストとビジュアル回帰テスト（Playwright）、S3 モック（moto）を使う結合テスト、型定義の差分確認、脆弱性検査、macOS でのビルド確認 | ubuntu-latest、macos-latest |
 | `.github/workflows/release.yml` | `v*.*.*` タグの push、手動実行 | ユニバーサルバイナリのビルド、アドホック署名、構成証明、GitHub Releases（下書き）の作成、更新情報（latest.json）の生成 | macos-latest |
 | `.github/workflows/e2e.yml` | 毎晩、手動実行、`e2e` ラベルの付いた PR | WebdriverIO による E2E テスト（[09 §2.5](09-testing.md#25-e2e-テスト)） | macos-latest |
-| `renovate.json`（Renovate） | 毎週 | npm（pnpm）、cargo、github-actions の依存更新（§2.1） | — |
+| `renovate.json`（Renovate） | 毎週 | npm（pnpm）、cargo、github-actions、docker（moto・Playwright のイメージ）の依存更新（§2.1） | — |
 
 Rust のワークスペースは、Tauri 非依存の `s3drive-core` と、アプリ本体（`src-tauri`、パッケージ名 `s3drive-app`）に分かれている（[01 §4](01-architecture.md#4-リポジトリ構成)）。`s3drive-core` は Linux ランナーで Docker のサービスコンテナ（moto）を使ってテストし、macOS ランナーはアプリのビルド確認とリリースだけに使う。
 
@@ -46,18 +46,20 @@ Rust のワークスペースは、Tauri 非依存の `s3drive-core` と、ア�
 
 - Renovate の `minimumReleaseAge` を pnpm の設定（1 日。[01 §8.2](01-architecture.md#82-pnpm-の設定)）と揃える。Renovate は pnpm 側の設定を読まないため、揃えないと公開直後のバージョンへの更新 PR がインストールで失敗する。
 - GitHub Actions のアクションはコミット SHA で固定し（`pinDigests`）、SHA の更新も Renovate に任せる。
+- 実際の `renovate.json` には、上に加えて次のルールがある。moto のイメージを 5.1 系に留める（5.2 系は `GetBucketVersioning` の応答が SDK と互換でない）、Tauri の npm パッケージと Rust クレートをまとめて更新する、WebdriverIO をまとめて更新する、`@playwright/test` と CI の Playwright のイメージ（`mcr.microsoft.com/playwright`）をまとめて更新する（更新したら基準画像を作り直す。[09 §2.6](09-testing.md#26-ビジュアル回帰テスト)）。
 - GitHub の依存関係グラフも同じ理由で pnpm 12 のロックファイルを正しく扱えないことがあるため、脆弱性の検出は CI の `pnpm audit` と `cargo deny` を正とする（§3 の `audit` ジョブ）。
 
 ## 3. ci.yml
 
 | ジョブ | ランナー | 内容 |
 |---|---|---|
-| `frontend` | ubuntu-latest | `pnpm/setup`（pnpm 12・Node.js 26 の導入とロックファイルどおりの `pnpm install`）、Biome、`pnpm typecheck`（TypeScript 7 の `tsc -b`）、Vitest 5（カバレッジ）、`vite build` |
-| `core` | ubuntu-latest（サービス: moto） | rustfmt、clippy（警告をエラー扱い）、`cargo test -p s3drive-core`（単体テストと moto を使う結合テスト）、ts-rs で生成した型定義に差分がないことの確認 |
-| `app` | macos-latest | clippy、`cargo test -p s3drive-app`、`pnpm tauri build --debug --bundles app`（アドホック署名）で macOS 向けビルドが通ることを確認 |
-| `audit` | ubuntu-latest | `cargo deny check`、`pnpm audit --prod` |
+| `frontend` | ubuntu-latest | `pnpm/setup`（pnpm 12・Node.js 26 の導入とロックファイルどおりの `pnpm install`）、Biome、`pnpm typecheck`（TypeScript 7 の `tsc -b`）、Vitest 5（カバレッジ。`src/lib`・`src/features` の行カバレッジが 70% 未満なら失敗）、`vite build` |
+| `ui` | ubuntu-latest（コンテナ: Playwright の公式イメージ） | Playwright（WebKit）でモックバックエンドの画面テストとビジュアル回帰テスト（[09 §2.4](09-testing.md#24-モックバックエンドでの画面テスト)、[§2.6](09-testing.md#26-ビジュアル回帰テスト)）。基準画像と同じ描画にするため、`@playwright/test` と同じ版のイメージで実行する |
+| `core` | ubuntu-latest（サービス: moto） | rustfmt、clippy（警告をエラー扱い。ベンチマークの `bench` 機能を含む）、`cargo llvm-cov -p s3drive-core --fail-under-lines 80`（単体テストと moto を使う結合テスト。行カバレッジが 80% 未満なら失敗）、ts-rs で生成した型定義に差分がないことの確認 |
+| `app` | macos-latest | clippy（`e2e` 機能の有無の両方）、`cargo test -p s3drive-app`、`pnpm tauri build --debug --bundles app`（アドホック署名）で macOS 向けビルドが通ることを確認 |
+| `audit` | ubuntu-latest | アクセスキー ID の形の文字列の検査、`cargo deny check`、`pnpm audit --prod` |
 
-pnpm と Node.js のバージョンはワークフローに書かない。`pnpm/setup` アクション（pnpm 11 以降向けの公式アクション）が `package.json` の `packageManager` と `devEngines.runtime`（[01 §8.1](01-architecture.md#81-バージョンの固定)）を読み取り、pnpm 12 と Node.js 26 を導入してから `pnpm install` まで行う。`actions/setup-node` は使わない。
+pnpm と Node.js のバージョンはワークフローに書かない。`pnpm/setup` アクション（pnpm 11 以降向けの公式アクション）が `package.json` の `packageManager` と `.node-version`（[01 §8.1](01-architecture.md#81-バージョンの固定)）を読み取り、pnpm 12 と Node.js 26 を導入してから `pnpm install` まで行う。`actions/setup-node` は使わない。
 
 ```yaml
 name: CI
@@ -85,8 +87,20 @@ jobs:
           require-lockfile: true       # ロックファイルと食い違えば失敗させる
       - run: pnpm biome ci .
       - run: pnpm typecheck            # tsc -b（TypeScript 7）
-      - run: pnpm vitest run --coverage
+      - run: pnpm vitest run --coverage   # 閾値は vite.config.ts の coverage.thresholds
       - run: pnpm vite build
+
+  ui:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v<@playwright/test と同じ版>-noble
+    steps:
+      - uses: actions/checkout@<SHA>
+      - uses: pnpm/setup@<SHA>
+        with:
+          cache: true
+          require-lockfile: true
+      - run: pnpm exec playwright test   # 画面テストとビジュアル回帰テスト
 
   core:
     runs-on: ubuntu-latest
@@ -101,16 +115,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@<SHA>
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@<SHA>
+      - uses: taiki-e/install-action@<SHA>
+        with:
+          tool: cargo-llvm-cov
       - run: cargo fmt --all --check
-      - run: cargo clippy -p s3drive-core --all-targets --locked -- -D warnings
-      - run: cargo test -p s3drive-core --locked
+      - run: cargo clippy -p s3drive-core --all-targets --all-features --locked -- -D warnings
+      - run: cargo llvm-cov -p s3drive-core --locked --fail-under-lines 80
       - run: git diff --exit-code -- src/lib/ipc/bindings
 
   app:
     runs-on: macos-latest
-    needs: [frontend, core]
+    needs: [frontend, ui, core]
     steps:
       - uses: actions/checkout@<SHA>
       - uses: pnpm/setup@<SHA>
@@ -123,6 +140,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@<SHA>
       - run: cargo clippy -p s3drive-app --all-targets --locked -- -D warnings
+      - run: cargo clippy -p s3drive-app --all-targets --locked --features e2e -- -D warnings
       - run: cargo test -p s3drive-app --locked
       - run: pnpm tauri build --debug --bundles app
 
@@ -130,6 +148,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<SHA>
+      - name: アクセスキー ID の形の文字列がないことの確認
+        run: "! git grep -nE '(AKIA|ASIA)[0-9A-Z]{16}' -- . ':!design-system'"
       - uses: EmbarkStudios/cargo-deny-action@<SHA>
       - uses: pnpm/setup@<SHA>
         with:
@@ -333,11 +353,11 @@ Apple Developer Program に加入した場合は、次を追加する（§4.3）
 
 | 対象 | ルール |
 |---|---|
-| main | PR 必須、必須チェック（`frontend`、`core`、`app`、`audit`）、squash マージ、force push 禁止 |
+| main | PR 必須、必須チェック（`frontend`、`ui`、`core`、`app`、`audit`）、squash マージ、force push 禁止 |
 | タグ `v*` | 保護されたタグ（作成できるのはメンテナのみ） |
 
 ## 9. 実行時間とコスト
 
 - macOS ランナーは Linux より実行コストが高いため、`app` ジョブは Linux のジョブが成功してから実行する。E2E は毎晩と必要時のみにする。
 - pnpm のストア（`pnpm/setup` の `cache`）と Cargo のビルド結果（`rust-cache`）をキャッシュする。
-- 目安: `frontend` 約 2 分、`core` 約 3〜6 分、`app` 約 10 分、リリース約 15〜25 分（ユニバーサルビルドを含む）。
+- 目安: `frontend` 約 2 分、`ui` 約 3 分、`core` 約 4〜8 分（カバレッジの計測を含む）、`app` 約 10 分、リリース約 15〜25 分（ユニバーサルビルドを含む）。

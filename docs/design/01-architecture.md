@@ -61,9 +61,9 @@ flowchart TB
 | フォーム | react-hook-form + zod | 接続フォーム、設定 |
 | Tauri API | @tauri-apps/api v2、各プラグインの JS パッケージ | |
 | Lint / Format | Biome v2（2.5） | 独自の解析器で動くため TypeScript 7 の影響を受けない |
-| テスト | Vitest 5、Testing Library、WebdriverIO（E2E） | [09-testing.md](09-testing.md) |
+| テスト | Vitest 5、Testing Library、Playwright（画面テスト・ビジュアル回帰）、WebdriverIO（E2E） | [09-testing.md](09-testing.md) |
 | パッケージ管理 | pnpm 12 | 設定は `pnpm-workspace.yaml` に書く（[§8.2](#82-pnpm-の設定)） |
-| 実行環境（Node.js） | Node.js 26 | `package.json` の `devEngines.runtime` で固定し、pnpm が取得する（[§8.1](#81-バージョンの固定)）。2026 年 10 月 28 日に Active LTS へ移行する |
+| 実行環境（Node.js） | Node.js 26 | `.node-version` で固定する（[§8.1](#81-バージョンの固定)）。2026 年 10 月 28 日に Active LTS へ移行する |
 
 ### 2.2 バックエンド
 
@@ -71,11 +71,11 @@ flowchart TB
 |---|---|---|
 | 言語 | Rust stable（edition 2024） | |
 | デスクトップシェル | Tauri 2.x（2.11） | REQ-D01 |
-| Tauri プラグイン | dialog、opener、store、log、updater、process、window-state、single-instance、notification、clipboard-manager | 用途は §6.3 |
+| Tauri プラグイン | dialog、opener、log、updater、process、window-state、single-instance、notification、clipboard-manager | 用途は §6.3。設定ファイルは Tauri 非依存にするため `s3drive-core` の `SettingsStore` で読み書きする（D1、[06 §2](06-data.md#2-設定ファイル)） |
 | 非同期 | tokio、tokio-util（`CancellationToken`）、futures | |
 | AWS SDK | aws-config、aws-sdk-s3、aws-sdk-sts、aws-sdk-cloudwatch、aws-sdk-costexplorer、aws-sdk-pricing | REQ-T01。`BehaviorVersion::latest()` |
 | キーチェーン | keyring-core 1.x ＋ apple-native-keyring-store 1.x（`keychain` モジュール） | keyring 4 系で、API（keyring-core）と OS ごとの保存先が別クレートに分かれた構成。App Store 外で配布するアプリ（アドホック署名。データ保護キーチェーンに必要な entitlements を使えない）では `keychain` モジュールを使う |
-| DB | rusqlite（`bundled`、FTS5 を含む）、r2d2_sqlite、rusqlite_migration | |
+| DB | rusqlite（`bundled`（FTS5 を含む）、`collation`）、r2d2_sqlite、rusqlite_migration | `collation` は検索結果を自然順で並べる照合順序に使う（[04 §10.2](04-features.md#102-検索条件)） |
 | Google 認証 | openidconnect 4（PKCE、ID トークン検証）、reqwest（rustls） | |
 | ループバック受信 | hyper 1.x（最小の HTTP サーバー） | OAuth のリダイレクト受信専用 |
 | シリアライズ | serde、serde_json | |
@@ -83,7 +83,7 @@ flowchart TB
 | エラー | thiserror | |
 | ログ | log / tracing | 出力は tauri-plugin-log |
 | その他 | mime_guess、unicode-normalization、uuid、walkdir、filetime | Content-Type 推定、キーの NFC 正規化、フォルダのアップロード、更新日時の復元 |
-| テスト | aws-smithy-mocks、tempfile、insta | [09-testing.md](09-testing.md) |
+| テスト | aws-smithy-mocks、tempfile、criterion（ベンチマーク）、cargo-llvm-cov（カバレッジ） | [09-testing.md](09-testing.md) |
 
 ## 3. 実行時の構成
 
@@ -103,25 +103,32 @@ Cargo ワークスペースと pnpm プロジェクトを同じリポジトリ�
 ```text
 s3driveapp/
 ├── .github/
-│   ├── workflows/            # ci.yml, release.yml
-│   └── （Renovate の設定はリポジトリ直下の renovate.json）
-├── docs/design/              # 本設計書
+│   └── workflows/            # ci.yml, e2e.yml, release.yml
+│       （Renovate の設定はリポジトリ直下の renovate.json）
+├── docs/
+│   ├── design/               # 本設計書
+│   └── ope/                  # 運用ドキュメント（環境構築・ビルド・テスト・リリース）
+├── design-system/            # DS の写し（README §2）
 ├── crates/
 │   └── s3drive-core/         # ドメイン・AWS・DB・検索（Tauri 非依存）
 │       ├── src/
-│       │   ├── lib.rs
-│       │   ├── error.rs
-│       │   ├── model/        # Connection, ObjectEntry, ObjectVersion, StorageClass …
-│       │   ├── aws/          # client_factory.rs, error_map.rs
+│       │   ├── lib.rs        # Core（サービス群のファサード）
+│       │   ├── error.rs      # CoreError、AppError、ErrorCode
+│       │   ├── model/        # IPC で受け渡す DTO（ts-rs）
+│       │   ├── aws/          # SDK の設定とクライアント群（mod.rs）、エラーの分類（error_map.rs）
 │       │   ├── auth/         # google.rs（OIDC）, loopback.rs
-│       │   ├── credentials/  # keychain.rs, provider.rs（静的キー / AssumeRole）
-│       │   ├── objects/      # list, head, folder, delete, copy, move, storage_class, restore, versions
-│       │   ├── transfer/     # manager, upload, download, multipart, progress
-│       │   ├── search/       # indexer, query
+│       │   ├── credentials.rs # アクセスキー、AssumeRole のプロバイダ、ExpiredToken の再試行
+│       │   ├── connections.rs # 接続・認証情報の管理、接続ごとのクライアント（ConnCtx）
+│       │   ├── objects/      # 一覧・メタデータ・フォルダ（mod.rs）、一括操作（batch.rs）、コピー（copy.rs）、取り出し（restore.rs）
+│       │   ├── versions.rs   # バージョン管理
+│       │   ├── transfer/     # 転送キュー（mod.rs）、upload, download, multipart, body
+│       │   ├── search/       # インデックスの作成（indexer.rs）、検索（query.rs）
 │       │   ├── metrics/      # storage（CloudWatch）, cost（Cost Explorer）, pricing
-│       │   ├── store/        # db, migrations/, repos/, settings
-│       │   └── util/         # key（正規化・検証）, size, time
-│       └── tests/            # moto を使う結合テスト
+│       │   ├── store/        # db（SQLite）、migrations.sql、settings、secrets（キーチェーン）、metrics_cache
+│       │   ├── jobs.rs, selection.rs
+│       │   └── util/         # key（正規化・検証）, region, time、自然順の比較
+│       ├── tests/            # moto を使う結合テスト（moto.rs）
+│       └── benches/          # 検索のベンチマーク（search.rs）
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
@@ -129,36 +136,39 @@ s3driveapp/
 │   ├── icons/
 │   └── src/
 │       ├── main.rs, lib.rs   # Builder、プラグイン・状態の登録
-│       ├── commands/         # auth, connections, objects, versions, transfers, search, metrics, settings, app
+│       ├── commands/         # auth, connections, objects, versions, transfers, search, metrics, app（設定を含む）
 │       ├── state.rs          # AppState
+│       ├── events.rs         # イベント名とチャネル（ChannelSink）
+│       ├── background.rs     # 取り出しの確認、アップデートの確認、メニューバー常駐の状態表示
 │       ├── menu.rs           # アプリのメニューバー
 │       ├── tray.rs           # メニューバー常駐
-│       └── window.rs         # ウィンドウ生成・テーマ・閉じる挙動
+│       └── window.rs         # ウィンドウ生成・テーマ・閉じる挙動・ドラッグ＆ドロップ
 ├── src/                      # フロントエンド
-│   ├── main.tsx, App.tsx
+│   ├── main.tsx
 │   ├── settings.tsx          # 設定ウィンドウのエントリ
-│   ├── app/                  # Providers、レイアウト、ショートカット、ネイティブメニュー連携
+│   ├── app/                  # App、起動処理、クエリ、イベントの購読
 │   ├── components/
 │   │   ├── ui/               # shadcn/ui で生成したコンポーネント（base-*）
 │   │   └── ds/               # DS 固有部品: FileIcon, StorageClassBadge, UsageBar, AppShell …
-│   ├── features/             # auth, connections, browser, inspector, transfers, dialogs, search, dashboard, settings
+│   ├── features/             # signin, connections, browser, inspector, dialogs, dashboard, settings、操作（actions, commands, transfer-center）
 │   ├── lib/
-│   │   ├── ipc/              # invoke ラッパー、bindings/（ts-rs 生成物）
+│   │   ├── ipc/              # invoke ラッパー、bindings/（ts-rs 生成物）、mock/（モックバックエンド）
 │   │   ├── format.ts         # サイズ・日時・金額の書式
-│   │   ├── file-kind.ts, storage-class.ts
+│   │   ├── file-kind.ts, storage-class.ts, sort.ts, validation.ts
 │   │   └── i18n/ja.ts        # 文言辞書
 │   ├── stores/               # Zustand ストア
-│   └── styles/
-│       ├── tokens/           # colors.css, typography.css, spacing.css, base.css（DS から取り込み）
-│       └── globals.css       # Tailwind の読み込みと @theme inline の割り当て
+│   ├── styles/
+│   │   ├── tokens/           # colors.css, layout.css（DS から取り込み）
+│   │   └── globals.css       # Tailwind の読み込みと @theme inline の割り当て
+│   └── test/                 # Vitest の準備（setup.ts）と画面テストの共通処理（harness.tsx）
+├── tests/ui/                 # Playwright の画面テストとビジュアル回帰テスト（基準画像は __screenshots__/）
 ├── e2e/                      # WebdriverIO
-├── tests/fixtures/           # テストデータ（DS のモックデータ相当）
-├── docker-compose.test.yml   # moto（S3 などのモック）
+├── docker-compose.test.yml   # moto（S3 のモック）
 ├── Cargo.toml                # workspace
 ├── rust-toolchain.toml       # §8.1
-├── package.json, pnpm-workspace.yaml, pnpm-lock.yaml   # §8.1〜8.2
-├── tsconfig.json, tsconfig.app.json, tsconfig.node.json # §8.3
-└── biome.json, vite.config.ts, components.json, renovate.json
+├── package.json, .node-version, pnpm-workspace.yaml, pnpm-lock.yaml   # §8.1〜8.2
+├── tsconfig.json, tsconfig.app.json, tsconfig.node.json, tsconfig.e2e.json # §8.3
+└── biome.json, vite.config.ts, playwright.config.ts, components.json, renovate.json, deny.toml
 ```
 
 ## 5. フロントエンド設計
@@ -195,15 +205,15 @@ flowchart LR
 |---|---|---|---|
 | `['session']` | サインイン状態 | ∞ | サインイン／サインアウト |
 | `['connections']` | 接続一覧 | ∞ | 接続の追加・更新・削除 |
-| `['bucket', connId]` | リージョン、バージョニング、暗号化 | 10 分 | 手動更新 |
+| `['bucket', connId]` | リージョン、バージョニング、暗号化 | 10 分 | 手動更新。接続を開いている間は常に取得する（ダイアログの文言と削除の方法がバージョニングで変わるため）。リージョンを修正した場合は通知する（§6.1） |
 | `['objects', connId, prefix, opts]` | フォルダの一覧（infinite query） | 30 秒 | 同じプレフィックスへの変更操作、⌘R |
 | `['object', connId, key, versionId]` | メタデータ（HeadObject） | 60 秒 | 対象キーへの変更操作 |
 | `['versions', connId, key]` | バージョン一覧 | 30 秒 | アップロード・復元・削除 |
 | `['folderSummary', connId, prefix]` | 項目数・合計サイズ | 5 分 | 配下への変更操作 |
-| `['search', connId, query]` | 検索結果 | 0 | インデックス更新 |
+| `['search', connId, query]` | 検索結果（infinite query。1,000 件ずつ、一覧の末尾まで表示したら続きを取得） | 0 | インデックス更新 |
 | `['indexStatus', connId]` | インデックスの状態 | 0（ジョブ中はイベントで更新） | インデックス構築の進捗 |
 | `['storageMetrics', connId]` | クラス別容量・オブジェクト数 | 1 時間 | 手動更新 |
-| `['cost', connId, month]` | コスト内訳・日別・予測（保存済みの結果） | ∞ | 手動の「更新」のみ（自動では取得しない。[04 §13.4](04-features.md#134-取得のタイミングと料金)） |
+| `['cost', connId]` | コスト内訳・日別・予測（保存済みの結果。対象月は結果の `month`） | ∞ | 手動の「更新」のみ（自動では取得しない。[04 §13.4](04-features.md#134-取得のタイミングと料金)） |
 | `['pricing', region]` | ストレージ単価 | 7 日 | なし |
 | `['settings']` | アプリ設定 | ∞ | 設定の変更（設定ウィンドウからのイベントでも無効化） |
 
@@ -239,12 +249,12 @@ DS の UI キットに合わせ、メインウィンドウのコンテンツ幅�
 - Cost Explorer と Price List のクライアントは `us-east-1` 固定で作る（どちらもこのリージョンのエンドポイントを使う）。
 - 認証情報プロバイダ:
   - ロール ARN なし: キーチェーンから読み込んだアクセスキーで静的な認証情報を作る。
-  - ロール ARN あり: 上記を元に `aws_config::sts::AssumeRoleProvider` を作る。一時認証情報の期限切れ前の再取得は SDK に任せる。セッション名は Google アカウントから作る（[07 §3](07-security.md#3-aws-認証情報の管理)）。
+  - ロール ARN あり: 上記を元に AssumeRole で一時認証情報を得るプロバイダ（`AssumeRoleCredentials`）を作る。SDK の `AssumeRoleProvider` は `SourceIdentity` を指定できないため自前で実装する。一時認証情報はこのプロバイダがキャッシュし、期限の 5 分前に取り直す。`ExpiredToken` を受け取ったときに取り直せるよう、この接続では SDK の ID キャッシュを使わない（§7.1）。セッション名は Google アカウントから作る（[07 §3](07-security.md#3-aws-認証情報の管理)）。
 - 共通設定:
   - リトライ: 通常は standard（最大 3 回）。一括操作用のクライアントは adaptive にして `SlowDown` に追従する。
   - タイムアウト: 接続 10 秒、単発 API の試行 30 秒。転送の本文は SDK の停止ストリーム保護（既定で有効）で検知する。
   - エンドポイントの上書き（テスト用）: 設定されていれば `endpoint_url` を指定し、パス形式にする。
-- リージョンの自動補正: `HeadBucket` が 301 と `x-amz-bucket-region` を返した場合は、接続のリージョンを修正して再試行し、ユーザーに通知する。
+- リージョンの自動補正: 接続の確認（[04 §2.2](04-features.md#22-接続の確認)）に加え、接続を開いたとき（`bucket_get_info`。クライアントを作るたびに 1 回）にも `HeadBucket` でリージョンを確かめる。301 と `x-amz-bucket-region` が返った場合は、接続のリージョンを修正してクライアントを作り直し、`connections://changed` を送って「バケットのリージョンに合わせて{短縮名}に変更しました」と通知する。
 
 ### 6.2 ジョブモデル
 
@@ -265,7 +275,6 @@ DS の UI キットに合わせ、メインウィンドウのコンテンツ幅�
 |---|---|
 | dialog | ファイル・フォルダの選択、保存先の選択 |
 | opener | Google 認可 URL をブラウザで開く、ダウンロードしたファイルを Finder で表示する |
-| store | 設定ファイル（`settings.json`）の読み書き |
 | log | ログファイルの出力（§7.3） |
 | updater / process | 自動更新と更新後の再起動 |
 | window-state | ウィンドウの位置・サイズの保存と復元 |
@@ -281,7 +290,7 @@ DS の UI キットに合わせ、メインウィンドウのコンテンツ幅�
 - AWS SDK のエラーは次のように分類する。
   - サービスエラー: エラーコード（`AccessDenied`、`NoSuchKey`、`InvalidObjectState` など）から `AppError` のコードに変換する。
   - 通信エラー・タイムアウト: `NETWORK` として `retryable = true` にする。
-  - `ExpiredToken`: 認証情報を取り直して 1 回だけ再試行する。
+  - `ExpiredToken`: 認証情報を取り直して 1 回だけ再試行する。AssumeRole を使う接続の各クライアントに、応答が `ExpiredToken`（S3・CloudWatch は本文の `Code`、Cost Explorer・Price List は `x-amzn-ErrorType`・`__type`）なら一時認証情報のキャッシュを捨てて再試行させるリトライ分類器（`ExpiredTokenRetry`）を登録する。取り直してから 60 秒以内の認証情報でも拒否された場合は、時刻のずれなど取り直しても解決しない原因とみなして再試行せず、`CREDENTIALS_EXPIRED` とする。静的なアクセスキーは期限切れにならないため対象外。
 - UI での扱い:
   - 操作の失敗: トースト（tone = destructive）で通知する。
   - 画面の読み込み失敗: 該当領域に空状態と「再試行」ボタンを表示する。
@@ -320,7 +329,7 @@ DS の UI キットに合わせ、メインウィンドウのコンテンツ幅�
 
 ### 8.1 バージョンの固定
 
-pnpm と Node.js のバージョンは `package.json` で固定し、開発者の端末と CI で同じものを使う。
+pnpm は `package.json`、Node.js は `.node-version` で固定し、開発者の端末と CI で同じものを使う。
 
 ```json
 {
@@ -329,9 +338,6 @@ pnpm と Node.js のバージョンは `package.json` で固定し、開発者�
   "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@12.6.0",
-  "devEngines": {
-    "runtime": { "name": "node", "version": "^26.0.0", "onFail": "download" }
-  },
   "scripts": {
     "dev": "vite",
     "dev:mock": "vite --mode mock",
@@ -339,7 +345,9 @@ pnpm と Node.js のバージョンは `package.json` で固定し、開発者�
     "typecheck": "tsc -b",
     "lint": "biome check .",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "e2e": "wdio run e2e/wdio.conf.ts",
+    "e2e:build": "tauri build --debug --no-bundle --features e2e"
   }
 }
 ```
@@ -347,7 +355,7 @@ pnpm と Node.js のバージョンは `package.json` で固定し、開発者�
 | 対象 | 方針 |
 |---|---|
 | pnpm | `packageManager` に 12 系の完全なバージョンを書く（上の値は例。Renovate で更新する。[08 §2](08-cicd.md#2-ワークフロー一覧)）。別のバージョンの pnpm で実行した場合は、指定のバージョンが自動で取得される |
-| Node.js | `devEngines.runtime` に `^26.0.0` を書く。pnpm が該当する Node.js を取得してスクリプトの実行に使い、解決したバージョンとチェックサムを `pnpm-lock.yaml` に記録する。開発者が各自で Node.js のバージョンを揃える必要はない |
+| Node.js | `.node-version` に `26` を書く。開発者は `.node-version` を読み取れるバージョン管理ツール（fnm、mise、nodenv など）で導入する（docs/ope/01-local-setup.md） |
 | CI | 同じ指定を `pnpm/setup` アクションが読み取る（[08 §3](08-cicd.md#3-ciyml)）。ワークフローにはバージョンを書かない |
 | Rust | `rust-toolchain.toml` で stable チャンネルと、リリースに必要なターゲット（`aarch64-apple-darwin`、`x86_64-apple-darwin`）を指定する |
 

@@ -338,6 +338,44 @@ pub async fn class_totals(
     .await
 }
 
+/// ベンチマーク用（`benches/search.rs`。09 §5）。インデックスを直接作り、同期で検索する。
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub mod bench_support {
+    use super::*;
+    use crate::model::{SearchEntry, SearchQuery};
+
+    /// 完成したインデックス（世代 1）を 1 つのトランザクションで作る。
+    pub fn seed(conn: &mut rusqlite::Connection, connection_id: &str, objects: &[IndexedObject]) {
+        let tx = conn.transaction().unwrap();
+        tx.execute(
+            "INSERT INTO index_state (connection_id, status, generation, last_full_scan_at) VALUES (?1, 'ready', 1, ?2)",
+            params![connection_id, time::now_rfc3339()],
+        )
+        .unwrap();
+        let mut seen = BTreeSet::new();
+        for o in objects {
+            write_object(&tx, connection_id, o, 1).unwrap();
+            write_prefixes(&tx, connection_id, &o.key, 1, &mut seen).unwrap();
+        }
+        refresh_counts(&tx, connection_id).unwrap();
+        tx.commit().unwrap();
+    }
+
+    pub fn query(
+        conn: &rusqlite::Connection,
+        connection_id: &str,
+        q: &SearchQuery,
+    ) -> (Vec<SearchEntry>, u64) {
+        query::run_query(conn, connection_id, q).unwrap()
+    }
+
+    /// `Db::open` と同じ設定（WAL・自然順の照合順序）で接続を開く。
+    pub fn open(path: &std::path::Path) -> rusqlite::Connection {
+        crate::store::db::open_for_bench(path)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;

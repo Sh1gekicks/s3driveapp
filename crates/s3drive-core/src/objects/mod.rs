@@ -703,6 +703,63 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn lists_a_page_with_decoded_keys_and_folders() {
+        use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
+        use aws_sdk_s3::types::{CommonPrefix, Object};
+        use aws_smithy_mocks::{RuleMode, mock, mock_client};
+
+        let rule = mock!(aws_sdk_s3::Client::list_objects_v2)
+            .match_requests(|r| {
+                r.prefix() == Some("p/")
+                    && r.delimiter() == Some("/")
+                    && r.max_keys() == Some(1000)
+                    && r.continuation_token() == Some("t1")
+            })
+            .then_output(|| {
+                let obj = |k: &str| {
+                    Object::builder()
+                        .key(k)
+                        .size(3)
+                        .e_tag("\"e\"")
+                        .storage_class(aws_sdk_s3::types::ObjectStorageClass::Glacier)
+                        .build()
+                };
+                ListObjectsV2Output::builder()
+                    // EncodingType=url のため、キーはエンコードされて返る（04 §3.1）
+                    .common_prefixes(
+                        CommonPrefix::builder()
+                            .prefix("p/%E6%97%A5%E6%9C%AC/")
+                            .build(),
+                    )
+                    .contents(obj("p/"))
+                    .contents(obj("p/a+b.txt"))
+                    .contents(obj("p/.hidden"))
+                    .next_continuation_token("t2")
+                    .build()
+            });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&rule]);
+        let (core, _dir) = Core::for_tests(None).unwrap();
+        core.with_test_connection(crate::connections::ConnCtx::for_tests("k1", "b", s3))
+            .await;
+        let page = core
+            .objects()
+            .list_page("k1", "p/", Some("t1".into()), ListOptions::default())
+            .await
+            .unwrap();
+        let names: Vec<&str> = page.entries.iter().map(Entry::name).collect();
+        // 現在のフォルダのマーカーと隠しファイルは除き、キーを復元する
+        assert_eq!(names, ["日本", "a b.txt"]);
+        assert_eq!(page.next_token.as_deref(), Some("t2"));
+        assert!(matches!(
+            &page.entries[1],
+            Entry::File {
+                restore: RestoreState::Archived,
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn summarizes_direct_children_and_total_size() {
         let objects = vec![

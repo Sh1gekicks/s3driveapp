@@ -119,6 +119,25 @@ impl SettingsStore {
         })
     }
 
+    /// IPC（`settings_update`）から受け取った変更を重ねる。
+    ///
+    /// ローカルのパスはフロントエンドから受け取らない（05 §3.9）。`general.downloadDir` は無視し、
+    /// ダウンロード先は Rust 側のフォルダ選択（[`Self::set_download_dir`]）でだけ変更する。
+    pub fn patch_from_ipc(&self, mut patch: serde_json::Value) -> CoreResult<Settings> {
+        if let Some(general) = patch.get_mut("general").and_then(|g| g.as_object_mut()) {
+            general.remove("downloadDir");
+        }
+        self.patch(patch)
+    }
+
+    /// ダウンロード先を変更する（Rust 側のフォルダ選択で得たパスだけを渡す）。
+    pub fn set_download_dir(&self, dir: &Path) -> CoreResult<Settings> {
+        self.update(|file| {
+            file.settings.general.download_dir = Some(dir.display().to_string());
+            Ok(file.settings.clone())
+        })
+    }
+
     fn save(&self, data: &SettingsFile) -> CoreResult<()> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -177,6 +196,27 @@ mod tests {
                 .is_err()
         );
         assert_eq!(store.settings().general.appearance, Appearance::Auto);
+    }
+
+    #[test]
+    fn ipc_patches_cannot_change_the_download_dir() {
+        let store = SettingsStore::in_memory(SettingsFile::default());
+        let s = store
+            .patch_from_ipc(serde_json::json!({
+                "general": { "downloadDir": "/etc", "showHidden": true }
+            }))
+            .unwrap();
+        assert_eq!(s.general.download_dir, None);
+        assert!(s.general.show_hidden);
+
+        let s = store
+            .set_download_dir(Path::new("/Users/a/Desktop"))
+            .unwrap();
+        assert_eq!(s.general.download_dir.as_deref(), Some("/Users/a/Desktop"));
+        let s = store
+            .patch_from_ipc(serde_json::json!({ "general": { "downloadDir": null } }))
+            .unwrap();
+        assert_eq!(s.general.download_dir.as_deref(), Some("/Users/a/Desktop"));
     }
 
     #[test]

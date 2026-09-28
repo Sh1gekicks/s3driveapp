@@ -2,8 +2,13 @@
 
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
+import { toast } from '@/components/ui/toaster';
+import { ja } from '@/lib/i18n/ja';
 import type { Entry, ListOptions, SearchQuery } from '@/lib/ipc';
 import * as ipc from '@/lib/ipc';
+import { regionShort } from '@/lib/region';
+import { nextSearchOffset } from '@/stores/ui';
+import { queryClient } from './query-client';
 import { qk, staleTime } from './query-keys';
 
 export function useSession() {
@@ -42,10 +47,20 @@ export function useCredentials(enabled = true) {
   });
 }
 
+/** バケットの情報。接続のリージョンが違っていた場合は Rust 側で修正され、その旨を知らせる（01 §6.1）。 */
+async function fetchBucketInfo(connId: string) {
+  const info = await ipc.connections.bucketInfo(connId);
+  if (info.regionCorrected) {
+    toast.show({ title: ja.connection.regionCorrected(regionShort(info.region)) });
+    void queryClient.invalidateQueries({ queryKey: qk.objectsAll(connId) });
+  }
+  return info;
+}
+
 export function useBucketInfo(connId: string | null) {
   return useQuery({
     queryKey: qk.bucket(connId ?? ''),
-    queryFn: () => ipc.connections.bucketInfo(connId as string),
+    queryFn: () => fetchBucketInfo(connId as string),
     staleTime: staleTime.bucket,
     enabled: Boolean(connId),
     refetchOnWindowFocus: false,
@@ -119,14 +134,26 @@ export function useFolderChildren(connId: string, prefix: string, enabled: boole
   });
 }
 
+/** 検索結果。1,000 件ずつ取得し、一覧の末尾まで表示したら続きを取得する（04 §10.2）。 */
 export function useSearch(connId: string | null, query: SearchQuery | null) {
-  return useQuery({
+  const search = useInfiniteQuery({
     queryKey: qk.search(connId ?? '', query ?? undefined),
-    queryFn: () => ipc.search.query(connId as string, query as SearchQuery),
+    queryFn: ({ pageParam }) =>
+      ipc.search.query(connId as string, { ...(query as SearchQuery), offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (_last, pages) => nextSearchOffset(pages),
     staleTime: staleTime.search,
     enabled: Boolean(connId && query),
     placeholderData: keepPreviousData,
   });
+  const pages = search.data?.pages;
+  const results = useMemo(() => pages?.flatMap((p) => p.entries) ?? [], [pages]);
+  return {
+    ...search,
+    results,
+    total: pages?.[0]?.total ?? null,
+    index: pages?.[pages.length - 1]?.index ?? null,
+  };
 }
 
 export function useIndexStatus(connId: string | null, enabled = true) {

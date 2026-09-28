@@ -14,7 +14,7 @@
 | デバッグビルド | `pnpm tauri build --debug --bundles app` | `target/debug/bundle/macos/S3 Drive.app` | CI の `app` ジョブと同じビルド。動作確認 |
 | リリースビルド（手元の CPU 向け） | `pnpm tauri build` | `target/release/bundle/macos/S3 Drive.app`、`target/release/bundle/dmg/S3 Drive_<版>_<CPU>.dmg` | 配布物に近い形での確認 |
 | リリースビルド（ユニバーサル） | `pnpm tauri build --target universal-apple-darwin` | `target/universal-apple-darwin/release/bundle/` 以下の `.app` と `.dmg` | リリースと同じ構成（Apple Silicon と Intel の両方）での確認 |
-| E2E 用ビルド | `pnpm e2e:build` | `target/debug/s3drive-app` | E2E テスト（[03 §2.3](03-test.md#23-e2e-テスト)） |
+| E2E 用ビルド | `pnpm e2e:build` | `target/debug/s3drive-app` | E2E テスト（[03 §2.5](03-test.md#25-e2e-テスト)） |
 
 - `pnpm tauri build` は、`tauri.conf.json` の `beforeBuildCommand`（`pnpm build`）でフロントエンドをビルドしてから Rust をビルドし、バンドルを作る。
 - ユニバーサルビルドに必要なターゲット（`aarch64-apple-darwin`、`x86_64-apple-darwin`）は `rust-toolchain.toml` で導入済み。2 つのターゲットをビルドするため時間がかかる。

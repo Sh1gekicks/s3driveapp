@@ -4,4 +4,8 @@ import type { Versioning } from "./Versioning";
 /**
  * バケットの情報（リージョン・バージョニング・暗号化）。
  */
-export type BucketInfo = { bucket: string, region: string, versioning: Versioning, encryption: string, };
+export type BucketInfo = { bucket: string, region: string, versioning: Versioning, encryption: string, 
+/**
+ * HeadBucket の応答（301 と `x-amz-bucket-region`）から接続のリージョンを修正した（01 §6.1）。
+ */
+regionCorrected: boolean, };

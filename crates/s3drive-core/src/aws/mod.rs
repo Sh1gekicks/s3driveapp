@@ -10,6 +10,8 @@ use aws_sdk_s3::config::{RequestChecksumCalculation, ResponseChecksumValidation}
 use aws_smithy_types::retry::RetryConfig;
 use aws_smithy_types::timeout::TimeoutConfig;
 
+use crate::credentials::ExpiredTokenRetry;
+
 /// Cost Explorer と Price List のエンドポイントのリージョン。
 pub const GLOBAL_REGION: &str = "us-east-1";
 
@@ -18,6 +20,17 @@ pub async fn sdk_config(
     region: &str,
     credentials: SharedCredentialsProvider,
     endpoint_url: Option<&str>,
+) -> SdkConfig {
+    sdk_config_with(region, credentials, endpoint_url, true).await
+}
+
+/// `cache_identity` が偽なら SDK の ID キャッシュを使わない。AssumeRole のプロバイダが自分でキャッシュし、
+/// `ExpiredToken` を受け取ったときに取り直せるようにするため（[`crate::credentials::ExpiredTokenRetry`]）。
+pub async fn sdk_config_with(
+    region: &str,
+    credentials: SharedCredentialsProvider,
+    endpoint_url: Option<&str>,
+    cache_identity: bool,
 ) -> SdkConfig {
     let mut loader = aws_config::defaults(BehaviorVersion::latest())
         .region(Region::new(region.to_string()))
@@ -31,6 +44,9 @@ pub async fn sdk_config(
         );
     if let Some(url) = endpoint_url {
         loader = loader.endpoint_url(url);
+    }
+    if !cache_identity {
+        loader = loader.identity_cache(aws_config::identity::IdentityCache::no_cache());
     }
     loader.load().await
 }
@@ -52,9 +68,17 @@ pub struct Clients {
 }
 
 impl Clients {
-    pub fn new(config: &SdkConfig, endpoint_url: Option<&str>) -> Self {
+    /// `expired_retry` は AssumeRole を使う接続で指定する（`ExpiredToken` で取り直して 1 回だけ再試行する。01 §7.1）。
+    pub fn new(
+        config: &SdkConfig,
+        endpoint_url: Option<&str>,
+        expired_retry: Option<ExpiredTokenRetry>,
+    ) -> Self {
         let s3_base = || {
             let mut b = aws_sdk_s3::config::Builder::from(config);
+            if let Some(r) = &expired_retry {
+                b = b.retry_classifier(r.clone());
+            }
             if endpoint_url.is_some() {
                 // テスト用エンドポイント（moto）はパス形式にし、必要な場合だけチェックサムを計算する（09 §2.2）
                 b = b
@@ -79,18 +103,18 @@ impl Clients {
                 .retry_config(RetryConfig::adaptive().with_max_attempts(5))
                 .build(),
         );
-        let cloudwatch = aws_sdk_cloudwatch::Client::new(config);
+        let mut cloudwatch = aws_sdk_cloudwatch::config::Builder::from(config);
         let global = Region::from_static(GLOBAL_REGION);
-        let cost = aws_sdk_costexplorer::Client::from_conf(
-            aws_sdk_costexplorer::config::Builder::from(config)
-                .region(global.clone())
-                .build(),
-        );
-        let pricing = aws_sdk_pricing::Client::from_conf(
-            aws_sdk_pricing::config::Builder::from(config)
-                .region(global)
-                .build(),
-        );
+        let mut cost = aws_sdk_costexplorer::config::Builder::from(config).region(global.clone());
+        let mut pricing = aws_sdk_pricing::config::Builder::from(config).region(global);
+        if let Some(r) = &expired_retry {
+            cloudwatch = cloudwatch.retry_classifier(r.clone());
+            cost = cost.retry_classifier(r.clone());
+            pricing = pricing.retry_classifier(r.clone());
+        }
+        let cloudwatch = aws_sdk_cloudwatch::Client::from_conf(cloudwatch.build());
+        let cost = aws_sdk_costexplorer::Client::from_conf(cost.build());
+        let pricing = aws_sdk_pricing::Client::from_conf(pricing.build());
         Self {
             s3,
             s3_transfer,

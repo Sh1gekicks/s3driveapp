@@ -7,6 +7,7 @@ import type {
   FileKind,
   RemoteConflict,
   SearchQuery,
+  SearchResult,
   SizeFilter,
   Sort,
   StorageClass,
@@ -43,6 +44,20 @@ export function toSearchQuery(text: string, f: Filters, sort: Sort, offset = 0, 
   if (f.date !== 'all') q.date = f.date;
   if (f.storageClass !== 'all') q.storageClass = f.storageClass;
   return q;
+}
+
+/**
+ * 検索結果の次のページの offset（04 §10.2）。フォルダは最初のページの先頭にだけ含まれ、offset・limit は
+ * ファイルだけに適用されるため、読み込んだファイルの件数を次の offset にする。すべて読み込んだら `undefined`。
+ */
+export function nextSearchOffset(pages: SearchResult[]): number | undefined {
+  const first = pages[0];
+  if (!first) return 0;
+  const files = pages.reduce((n, p) => n + p.entries.filter((r) => r.entry.type === 'file').length, 0);
+  const folders = first.entries.filter((r) => r.entry.type === 'folder').length;
+  // 最後のページが空なら、件数が変わっても続きはない
+  if (pages.length > 1 && pages.at(-1)?.entries.length === 0) return undefined;
+  return files < first.total - folders ? files : undefined;
 }
 
 /** ダイアログの種類とペイロード。 */

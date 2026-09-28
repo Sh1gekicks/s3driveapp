@@ -8,7 +8,7 @@
 |---|---|---|---|
 | Google のリフレッシュトークン | macOS キーチェーン | 汎用パスワード項目 | ○ |
 | AWS のアクセスキー ID とシークレットアクセスキー | macOS キーチェーン | 汎用パスワード項目（JSON） | ○ |
-| 設定、接続、認証情報の表示用情報 | `~/Library/Application Support/io.github.sh1gekicks.s3drive/settings.json` | JSON（tauri-plugin-store） | × |
+| 設定、接続、認証情報の表示用情報 | `~/Library/Application Support/io.github.sh1gekicks.s3drive/settings.json` | JSON（`s3drive-core` の `SettingsStore`） | × |
 | 検索インデックス、転送の記録、取り出し要求、メトリクス・コストのキャッシュ | 同じフォルダの `s3drive.db` | SQLite | ×（オブジェクトのキー＝ファイル名を含む） |
 | ウィンドウの位置・サイズ | 同じフォルダ（tauri-plugin-window-state） | JSON | × |
 | ログ | `~/Library/Logs/io.github.sh1gekicks.s3drive/` | テキスト | ×（[01 §7.3](01-architecture.md#73-ログ) のマスキングを適用） |
@@ -19,7 +19,7 @@
 
 ## 2. 設定ファイル
 
-tauri-plugin-store で読み書きし、変更は即時に保存する。接続と認証情報は Google アカウント（`sub`）ごとに分けて保持する。
+Tauri に依存しないよう `s3drive-core` の `SettingsStore` で読み書きし（D1）、変更は即時に保存する（一時ファイルに書いてから置き換える）。接続と認証情報は Google アカウント（`sub`）ごとに分けて保持する。
 
 ```json
 {
@@ -76,7 +76,7 @@ tauri-plugin-store で読み書きし、変更は即時に保存する。接続�
 | キー | 内容 | 既定値 |
 |---|---|---|
 | `general.appearance` | 外観（`auto`／`light`／`dark`） | `auto` |
-| `general.downloadDir` | ダウンロード先（`null` は `~/Downloads`） | `null` |
+| `general.downloadDir` | ダウンロード先（`null` は `~/Downloads`）。フロントエンドからパスを受け取らないため、`settings_update` では変更できず、`app_choose_download_dir`（Rust 側のフォルダ選択）でだけ変更する（[05 §3.9](05-backend-ipc.md#39-ローカルパスの受け渡し)） | `null` |
 | `general.showHidden` | 隠しファイルを表示 | `false` |
 | `general.showMenuBarIcon` | メニューバーに表示 | `true` |
 | `view.*` | 表示モード・並べ替え・インスペクタの表示 | リスト・名前昇順・表示 |
@@ -175,6 +175,7 @@ erDiagram
     text tier
     integer days
     text status
+    text requested_at
     text expiry_at
   }
   metrics_cache {
@@ -192,7 +193,7 @@ erDiagram
 | `objects_fts` | `objects.name_norm` の全文検索インデックス（FTS5、trigram） |
 | `prefixes` | フォルダ名の検索用（親プレフィックスの一覧） |
 | `transfers` / `transfer_parts` | 転送の記録。未完了のマルチパートアップロードの後始末（[04 §14.5](04-features.md#145-アプリが中断した転送の後始末)）と、将来の再開に使う |
-| `restore_requests` | アーカイブの取り出し要求と状態 |
+| `restore_requests` | アーカイブの取り出し要求と状態（`inProgress`／`restored`／`abandoned`。[04 §8.4](04-features.md#84-アーカイブの取り出し)） |
 | `metrics_cache` | CloudWatch・Cost Explorer・Price List の結果（JSON） |
 
 ### 4.3 主な DDL
@@ -239,33 +240,34 @@ CREATE VIRTUAL TABLE objects_fts USING fts5(
 
 CREATE TABLE metrics_cache (
   connection_id TEXT NOT NULL,                  -- 単価など接続に依存しないものは ''
-  kind          TEXT NOT NULL,                  -- storage / cost:2026-09 / pricing:ap-northeast-1
-  payload       TEXT NOT NULL,                  -- JSON
+  kind          TEXT NOT NULL,                  -- storage / cost / pricing:ap-northeast-1
+  payload       TEXT NOT NULL,                  -- JSON（コストは対象月を含む）
   fetched_at    TEXT NOT NULL,
-  expires_at    TEXT NOT NULL,
+  expires_at    TEXT,                           -- NULL は期限なし（コスト。04 §13.4）
   PRIMARY KEY (connection_id, kind)
 );
 ```
+
+- 検索結果を一覧と同じ自然順で並べるため、接続を開くたびに照合順序 `NATURAL_ORDER`（数字の並びを数値として比べる）を登録する（[04 §10.2](04-features.md#102-検索条件)）。
 
 ### 4.4 検索クエリの例
 
 ```sql
 SELECT o.key, o.name, o.parent, o.size, o.last_modified, o.storage_class
 FROM objects AS o
-JOIN objects_fts AS f ON f.rowid = o.id
 WHERE o.connection_id = :connection_id
-  AND objects_fts MATCH :phrase            -- 3 文字以上。例: '"report"'
+  AND o.id IN (SELECT rowid FROM objects_fts WHERE objects_fts MATCH :phrase)  -- 3 文字以上。例: '"report"'
   AND (:ext IS NULL OR o.ext = :ext)
   AND (:min_size IS NULL OR o.size >= :min_size)
   AND (:max_size IS NULL OR o.size < :max_size)
   AND (:since IS NULL OR o.last_modified >= :since)
   AND (:storage_class IS NULL OR o.storage_class = :storage_class)
   AND o.is_marker = 0
-ORDER BY o.name_norm
+ORDER BY o.name_norm COLLATE NATURAL_ORDER
 LIMIT :limit OFFSET :offset;
 ```
 
-2 文字以下の検索語は `objects_fts` を使わず、`o.name_norm LIKE '%' || :q || '%'` で絞る。
+2 文字以下の検索語は `objects_fts` を使わず、`instr(o.name_norm, :q) > 0` で絞る（`LIKE` の特殊文字を検索語として扱うため）。
 
 ## 5. キャッシュ方針
 

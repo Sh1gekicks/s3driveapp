@@ -193,6 +193,46 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn reads_prices_from_get_products_pages() {
+        use aws_sdk_pricing::operation::get_products::GetProductsOutput;
+        use aws_smithy_mocks::{RuleMode, mock, mock_client};
+
+        let item = |volume: &str, usd: &str| {
+            format!(
+                r#"{{"product":{{"attributes":{{"volumeType":"{volume}"}}}},
+                   "terms":{{"OnDemand":{{"T":{{"priceDimensions":{{"D":{{"unit":"GB-Mo","beginRange":"0","pricePerUnit":{{"USD":"{usd}"}}}}}}}}}}}}}}"#
+            )
+        };
+        // 2 ページに分かれた応答（NextToken で続きを取得する）
+        let first = item("Standard", "0.025");
+        let second = [
+            item("Glacier Deep Archive", "0.002"),
+            item("Reduced Redundancy", "0.5"),
+        ];
+        let page1 = mock!(aws_sdk_pricing::Client::get_products)
+            .match_requests(|r| r.next_token().is_none())
+            .then_output(move || {
+                GetProductsOutput::builder()
+                    .price_list(first.clone())
+                    .next_token("p2")
+                    .build()
+            });
+        let page2 = mock!(aws_sdk_pricing::Client::get_products)
+            .match_requests(|r| r.next_token() == Some("p2"))
+            .then_output(move || {
+                GetProductsOutput::builder()
+                    .set_price_list(Some(second.to_vec()))
+                    .build()
+            });
+        let client = mock_client!(aws_sdk_pricing, RuleMode::MatchAny, [&page1, &page2]);
+        let prices = fetch(&client, "ap-northeast-1").await.unwrap();
+        assert_eq!(prices.get(&StorageClass::Standard), Some(&0.025));
+        assert_eq!(prices.get(&StorageClass::DeepArchive), Some(&0.002));
+        // 7 クラス以外（旧クラス）は使わない
+        assert_eq!(prices.len(), 2);
+    }
+
     #[test]
     fn ignores_unknown_volume_types() {
         assert_eq!(class_for_volume_type("Reduced Redundancy"), None);

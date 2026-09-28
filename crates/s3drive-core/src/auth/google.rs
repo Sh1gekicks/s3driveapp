@@ -5,11 +5,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use base64::Engine;
 use openidconnect::core::{
-    CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreProviderMetadata,
+    CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreIdTokenClaims, CoreIdTokenVerifier,
+    CoreProviderMetadata,
 };
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, OAuth2TokenResponse,
-    PkceCodeChallenge, RedirectUrl, RefreshToken, Scope,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, NonceVerifier,
+    OAuth2TokenResponse, PkceCodeChallenge, RedirectUrl, RefreshToken, Scope,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +20,8 @@ use crate::error::{CoreError, CoreResult, ErrorCode};
 use crate::model::UserSession;
 
 const ISSUER: &str = "https://accounts.google.com";
+/// ID トークンの `exp` の猶予（07 §2.3）。
+const EXPIRY_LEEWAY: chrono::Duration = chrono::Duration::seconds(60);
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const METADATA_TTL: Duration = Duration::from_secs(60 * 60);
 
@@ -103,6 +106,25 @@ impl GoogleAuth {
             .map_err(|e| CoreError::new(ErrorCode::Network).detail(format!("discovery: {e}")))?;
         *guard = Some((metadata.clone(), Instant::now()));
         Ok(metadata)
+    }
+
+    /// ID トークンを検証し、セッションを作る（07 §2.3）。
+    ///
+    /// 署名・`iss`（ディスカバリ文書の issuer と一致）・`aud`・`nonce` は openidconnect で、`exp` は 60 秒の猶予を
+    /// 付けて確認する。`email_verified` と許可リストは [`Self::session_from_claims`] で確認する。
+    /// `invalid` は検証に失敗したときのエラー（サインインと復元で文言が違う）。
+    fn verified_session(
+        &self,
+        verifier: CoreIdTokenVerifier<'_>,
+        id_token: &CoreIdToken,
+        nonce: impl NonceVerifier,
+        invalid: fn(String) -> CoreError,
+    ) -> CoreResult<UserSession> {
+        let verifier = verifier.set_time_fn(|| chrono::Utc::now() - EXPIRY_LEEWAY);
+        let claims = id_token
+            .claims(&verifier, nonce)
+            .map_err(|e| invalid(format!("id_token: {e}")))?;
+        self.session_from_claims(claims, &id_token.to_string())
     }
 
     fn session_from_claims(
@@ -201,15 +223,11 @@ impl AuthProvider for GoogleAuth {
             .extra_fields()
             .id_token()
             .ok_or_else(|| sign_in_failed("no id_token"))?;
-        let verifier = client.id_token_verifier();
-        let claims = id_token
-            .claims(&verifier, &nonce)
-            .map_err(|e| sign_in_failed(format!("id_token: {e}")))?;
         let refresh_token = token
             .refresh_token()
             .map(|t| t.secret().clone())
             .ok_or_else(|| sign_in_failed("no refresh_token"))?;
-        match self.session_from_claims(claims, &id_token.to_string()) {
+        match self.verified_session(client.id_token_verifier(), id_token, &nonce, sign_in_failed) {
             Ok(session) => Ok(SignInResult {
                 session,
                 refresh_token,
@@ -247,14 +265,13 @@ impl AuthProvider for GoogleAuth {
             .extra_fields()
             .id_token()
             .ok_or_else(|| CoreError::new(ErrorCode::AuthRequired).detail("no id_token"))?;
-        let verifier = client.id_token_verifier();
         // リフレッシュで得た ID トークンには nonce がない（07 §2.3）
-        let claims = id_token
-            .claims(&verifier, |_: Option<&Nonce>| Ok(()))
-            .map_err(|e| {
-                CoreError::new(ErrorCode::AuthRequired).detail(format!("id_token: {e}"))
-            })?;
-        self.session_from_claims(claims, &id_token.to_string())
+        self.verified_session(
+            client.id_token_verifier(),
+            id_token,
+            |_: Option<&Nonce>| Ok(()),
+            |detail| CoreError::new(ErrorCode::AuthRequired).detail(detail),
+        )
     }
 
     async fn revoke(&self, refresh_token: &str) -> CoreResult<()> {
@@ -323,6 +340,157 @@ mod tests {
         );
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"sub":"1"}"#);
         assert_eq!(hosted_domain(&format!("h.{payload}.s")), None);
+    }
+
+    mod id_token {
+        use openidconnect::core::{
+            CoreGenderClaim, CoreHmacKey, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
+        };
+        use openidconnect::{Audience, EmptyAdditionalClaims, EndUserEmail, StandardClaims};
+        use openidconnect::{EndUserName, LocalizedClaim, SubjectIdentifier};
+
+        use super::*;
+
+        // テスト用の鍵（HS256。クライアントシークレットを共有鍵にする）
+        const CLIENT_ID: &str = "client-id.apps.googleusercontent.com";
+        const SECRET: &str = "test-client-secret-for-hs256-signing";
+
+        struct Token {
+            issuer: &'static str,
+            audience: &'static str,
+            expires_in: chrono::Duration,
+            nonce: Option<&'static str>,
+            email_verified: bool,
+        }
+
+        impl Default for Token {
+            fn default() -> Self {
+                Self {
+                    issuer: "https://accounts.google.com",
+                    audience: CLIENT_ID,
+                    expires_in: chrono::Duration::minutes(10),
+                    nonce: Some("n-123"),
+                    email_verified: true,
+                }
+            }
+        }
+
+        fn sign(t: Token) -> CoreIdToken {
+            let now = chrono::Utc::now();
+            let mut name = LocalizedClaim::new();
+            name.insert(None, EndUserName::new("田中 優希".into()));
+            let standard =
+                StandardClaims::<CoreGenderClaim>::new(SubjectIdentifier::new("1234567890".into()))
+                    .set_email(Some(EndUserEmail::new("yuki@example.com".into())))
+                    .set_email_verified(Some(t.email_verified))
+                    .set_name(Some(name));
+            let claims = CoreIdTokenClaims::new(
+                IssuerUrl::new(t.issuer.into()).unwrap(),
+                vec![Audience::new(t.audience.into())],
+                now + t.expires_in,
+                now - chrono::Duration::minutes(1),
+                standard,
+                EmptyAdditionalClaims {},
+            )
+            .set_nonce(t.nonce.map(|n| Nonce::new(n.into())));
+            CoreIdToken::new(
+                claims,
+                &CoreHmacKey::new(SECRET.as_bytes()),
+                CoreJwsSigningAlgorithm::HmacSha256,
+                None,
+                None,
+            )
+            .unwrap()
+        }
+
+        fn auth(emails: &[&str]) -> GoogleAuth {
+            GoogleAuth::new(GoogleConfig {
+                client_id: CLIENT_ID.into(),
+                client_secret: SECRET.into(),
+                allowed_emails: emails.iter().map(|s| s.to_string()).collect(),
+                allowed_domains: vec![],
+            })
+            .unwrap()
+        }
+
+        fn verify(auth: &GoogleAuth, token: &CoreIdToken) -> CoreResult<UserSession> {
+            let verifier = CoreIdTokenVerifier::new_confidential_client(
+                ClientId::new(CLIENT_ID.into()),
+                ClientSecret::new(SECRET.into()),
+                IssuerUrl::new(ISSUER.into()).unwrap(),
+                CoreJsonWebKeySet::default(),
+            )
+            .set_allowed_algs(vec![CoreJwsSigningAlgorithm::HmacSha256]);
+            auth.verified_session(verifier, token, &Nonce::new("n-123".into()), sign_in_failed)
+        }
+
+        #[test]
+        fn accepts_a_valid_token() {
+            let session = verify(&auth(&[]), &sign(Token::default())).unwrap();
+            assert_eq!(session.sub, "1234567890");
+            assert_eq!(session.email, "yuki@example.com");
+            assert_eq!(session.name, "田中 優希");
+        }
+
+        #[test]
+        fn rejects_other_issuers() {
+            let token = sign(Token {
+                issuer: "https://evil.example.com",
+                ..Token::default()
+            });
+            assert_eq!(
+                verify(&auth(&[]), &token).unwrap_err().code,
+                ErrorCode::AuthRequired
+            );
+        }
+
+        #[test]
+        fn rejects_other_audiences_and_nonces() {
+            let token = sign(Token {
+                audience: "someone-else",
+                ..Token::default()
+            });
+            assert!(verify(&auth(&[]), &token).is_err());
+            let token = sign(Token {
+                nonce: Some("replayed"),
+                ..Token::default()
+            });
+            assert!(verify(&auth(&[]), &token).is_err());
+        }
+
+        #[test]
+        fn allows_60_seconds_of_clock_skew_after_expiry() {
+            let token = sign(Token {
+                expires_in: chrono::Duration::seconds(-30),
+                ..Token::default()
+            });
+            assert!(verify(&auth(&[]), &token).is_ok());
+            let token = sign(Token {
+                expires_in: chrono::Duration::seconds(-120),
+                ..Token::default()
+            });
+            assert!(verify(&auth(&[]), &token).is_err());
+        }
+
+        #[test]
+        fn requires_a_verified_email_on_the_allow_list() {
+            let token = sign(Token {
+                email_verified: false,
+                ..Token::default()
+            });
+            assert_eq!(
+                verify(&auth(&[]), &token).unwrap_err().code,
+                ErrorCode::AuthNotAllowed
+            );
+            let token = sign(Token::default());
+            assert_eq!(
+                verify(&auth(&["other@example.com"]), &token)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::AuthNotAllowed
+            );
+            assert!(verify(&auth(&["yuki@example.com"]), &token).is_ok());
+        }
     }
 
     #[test]
