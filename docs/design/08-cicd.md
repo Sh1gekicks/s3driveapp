@@ -83,7 +83,6 @@ jobs:
       - uses: actions/checkout@<SHA>
       - uses: pnpm/setup@<SHA>        # v3。pnpm 12 と Node.js 26 を導入し、pnpm install まで行う
         with:
-          cache: true
           require-lockfile: true       # ロックファイルと食い違えば失敗させる
       - run: pnpm biome ci .
       - run: pnpm typecheck            # tsc -b（TypeScript 7）
@@ -98,7 +97,6 @@ jobs:
       - uses: actions/checkout@<SHA>
       - uses: pnpm/setup@<SHA>
         with:
-          cache: true
           require-lockfile: true
       - run: pnpm exec playwright test   # 画面テストとビジュアル回帰テスト
 
@@ -132,13 +130,18 @@ jobs:
       - uses: actions/checkout@<SHA>
       - uses: pnpm/setup@<SHA>
         with:
-          cache: true
           require-lockfile: true
       - uses: dtolnay/rust-toolchain@<SHA>
         with:
           toolchain: stable
           components: clippy
+      - name: MACOSX_DEPLOYMENT_TARGET の設定   # tauri build と同じ値にそろえる（§9）
+        run: |
+          target=$(jq -er .bundle.macOS.minimumSystemVersion src-tauri/tauri.conf.json)
+          echo "MACOSX_DEPLOYMENT_TARGET=$target" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@<SHA>
+        with:
+          key: macos-${{ env.MACOSX_DEPLOYMENT_TARGET }}
       - run: cargo clippy -p s3drive-app --all-targets --locked -- -D warnings
       - run: cargo clippy -p s3drive-app --all-targets --locked --features e2e -- -D warnings
       - run: cargo test -p s3drive-app --locked
@@ -197,7 +200,6 @@ jobs:
       - uses: actions/checkout@<SHA>
       - uses: pnpm/setup@<SHA>
         with:
-          cache: true
           require-lockfile: true
       - uses: dtolnay/rust-toolchain@<SHA>
         with:
@@ -359,5 +361,8 @@ Apple Developer Program に加入した場合は、次を追加する（§4.3）
 ## 9. 実行時間とコスト
 
 - macOS ランナーは Linux より実行コストが高いため、`app` ジョブは Linux のジョブが成功してから実行する。E2E は毎晩と必要時のみにする。
-- pnpm のストア（`pnpm/setup` の `cache`）と Cargo のビルド結果（`rust-cache`）をキャッシュする。
+- Cargo のビルド結果は `rust-cache` でキャッシュする。
+  - `app` ジョブでは、clippy と `cargo test` にも `tauri build` と同じ `MACOSX_DEPLOYMENT_TARGET`（`tauri.conf.json` の `minimumSystemVersion`）を渡す。`tauri build` はこの変数を設定して cargo を実行し、cc を使うクレート（`ring`、`aws-lc-sys` など）はこの変数が変わるとビルドスクリプトから作り直しになるため、そろえないと `cargo test` と `tauri build` が互いの依存のビルド結果を無効にし、キャッシュがあっても依存を毎回ビルドし直す。
+  - `rust-cache` はキーが一致すると保存し直さない。キャッシュの中身を作り直したいときは `key` を変える（`app` ジョブのキーには `MACOSX_DEPLOYMENT_TARGET` を含める）。
+- pnpm のストアはキャッシュしない（`pnpm/setup` の `cache` を使わない）。`cache: true` は実行ごとに別のキーで保存するため、リポジトリのキャッシュの上限（10 GB）を圧迫して Cargo のキャッシュが追い出されやすくなる。また macOS では保存前の `pnpm store prune` でパッケージがすべて消え、復元しても再利用されない。レジストリからの取得は数秒で済む。
 - 目安: `frontend` 約 2 分、`ui` 約 3 分、`core` 約 4〜8 分（カバレッジの計測を含む）、`app` 約 10 分、リリース約 15〜25 分（ユニバーサルビルドを含む）。

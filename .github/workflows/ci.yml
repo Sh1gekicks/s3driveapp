@@ -19,10 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # pnpm 12 と Node.js（.node-version）を導入し、ロックファイルどおりに pnpm install まで行う
+      # pnpm 12 と Node.js（.node-version）を導入し、ロックファイルどおりに pnpm install まで行う。
+      # ストアはキャッシュしない（cache: true は実行ごとに別のキーで保存するためキャッシュの容量を圧迫し、
+      # macOS では保存前の pnpm store prune でパッケージがすべて消える。取得し直しても数秒で済む）
       - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:
-          cache: true
           require-lockfile: true
       - run: pnpm biome ci .
       - run: pnpm typecheck
@@ -40,7 +41,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:
-          cache: true
           require-lockfile: true
       - run: pnpm exec playwright test
       - name: レポートの保存
@@ -88,13 +88,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:
-          cache: true
           require-lockfile: true
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: stable
           components: clippy
+      # tauri build は tauri.conf.json の minimumSystemVersion を MACOSX_DEPLOYMENT_TARGET に設定して cargo を実行する。
+      # cc を使うクレート（ring、aws-lc-sys など）はこの変数が変わるとビルドスクリプトから作り直しになるため、
+      # clippy と cargo test にも同じ値を渡し、ステップごとに依存を作り直さないようにする
+      - name: MACOSX_DEPLOYMENT_TARGET の設定
+        run: |
+          target=$(jq -er .bundle.macOS.minimumSystemVersion src-tauri/tauri.conf.json)
+          echo "MACOSX_DEPLOYMENT_TARGET=$target" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: macos-${{ env.MACOSX_DEPLOYMENT_TARGET }}
       - run: cargo clippy -p s3drive-app --all-targets --locked -- -D warnings
       - run: cargo clippy -p s3drive-app --all-targets --locked --features e2e -- -D warnings
       - run: cargo test -p s3drive-app --locked
