@@ -76,6 +76,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only   # デバッグ情報は行番号だけにする（§9）
+
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -124,8 +127,7 @@ jobs:
       - run: git diff --exit-code -- src/lib/ipc/bindings
 
   app:
-    runs-on: macos-latest
-    needs: [frontend, ui, core]
+    runs-on: macos-latest               # Linux のジョブを待たずに並行して実行する（§9）
     steps:
       - uses: actions/checkout@<SHA>
       - uses: pnpm/setup@<SHA>
@@ -360,8 +362,9 @@ Apple Developer Program に加入した場合は、次を追加する（§4.3）
 
 ## 9. 実行時間とコスト
 
-- macOS ランナーは Linux より実行コストが高いため、`app` ジョブは Linux のジョブが成功してから実行する。E2E は毎晩と必要時のみにする。
-- Cargo のビルド結果は `rust-cache` でキャッシュする。
+- `app` ジョブは Linux のジョブを待たずに並行して実行する。公開リポジトリでは標準の macOS ランナーも無料のため、待っても費用は変わらず、全体の所要時間が延びるだけである（Linux のジョブが失敗しても `app` は最後まで実行される）。E2E は毎晩と必要時のみにする。
+- CI の Rust のビルドは、デバッグ情報を行番号だけにする（ワークフローの `env` の `CARGO_PROFILE_DEV_DEBUG: line-tables-only`。`test` プロファイルと `tauri build --debug` にも効く）。パニックのバックトレースの行番号は残したまま、コンパイルとリンクを速くし、キャッシュを小さくする。
+- Cargo のビルド結果は `rust-cache` でキャッシュする。`rust-cache` は `CARGO_` で始まる環境変数をキーに含めるため、`CARGO_PROFILE_DEV_DEBUG` を変えるとキャッシュも作り直される。
   - `app` ジョブでは、clippy と `cargo test` にも `tauri build` と同じ `MACOSX_DEPLOYMENT_TARGET`（`tauri.conf.json` の `minimumSystemVersion`）を渡す。`tauri build` はこの変数を設定して cargo を実行し、cc を使うクレート（`ring`、`aws-lc-sys` など）はこの変数が変わるとビルドスクリプトから作り直しになるため、そろえないと `cargo test` と `tauri build` が互いの依存のビルド結果を無効にし、キャッシュがあっても依存を毎回ビルドし直す。
   - `rust-cache` はキーが一致すると保存し直さない。キャッシュの中身を作り直したいときは `key` を変える（`app` ジョブのキーには `MACOSX_DEPLOYMENT_TARGET` を含める）。
 - pnpm のストアはキャッシュしない（`pnpm/setup` の `cache` を使わない）。`cache: true` は実行ごとに別のキーで保存するため、リポジトリのキャッシュの上限（10 GB）を圧迫して Cargo のキャッシュが追い出されやすくなる。また macOS では保存前の `pnpm store prune` でパッケージがすべて消え、復元しても再利用されない。レジストリからの取得は数秒で済む。

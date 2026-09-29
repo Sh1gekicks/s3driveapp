@@ -14,6 +14,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Rust のデバッグ情報は行番号だけにする（パニックのバックトレースの行番号は残る）。
+  # コンパイルとリンクが速くなり、rust-cache のキャッシュも小さくなる
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -82,8 +87,8 @@ jobs:
         run: git diff --exit-code -- src/lib/ipc/bindings
 
   app:
+    # 公開リポジトリでは標準の macOS ランナーも無料のため、Linux のジョブを待たずに並行して実行する（08 §9）
     runs-on: macos-latest
-    needs: [frontend, ui, core]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
