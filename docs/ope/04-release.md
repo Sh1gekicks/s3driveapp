@@ -78,7 +78,7 @@ gh secret set S3DRIVE_GOOGLE_CLIENT_SECRET --env release
 | ルールセット `release-tags`（`refs/tags/v*`） | タグの作成・更新・削除を制限する。タグを push・削除できるのは、ルールセットのバイパスを許可した人（メンテナ）だけ |
 | Environment `release` | 承認者（Required reviewers）の設定と、§1.3 のシークレット・変数 |
 
-ルールセットは「Settings」→「Rules」→「Rulesets」で設定する。設計（[08 §8](../design/08-cicd.md#8-ブランチ保護)）では、main に必須チェック（`frontend`、`core`、`app`、`audit`）を設けることにしているが、2026-09 時点のルールセット `main` には設定していない。有効にする場合は、ルールセット `main` に「Require status checks to pass」を追加し、4 つのジョブを指定する。
+ルールセットは「Settings」→「Rules」→「Rulesets」で設定する。設計（[08 §8](../design/08-cicd.md#8-ブランチ保護)）では、main に必須チェック（`frontend`、`ui`、`core`、`app`、`audit`）を設けることにしているが、2026-09 時点のルールセット `main` には設定していない。有効にする場合は、ルールセット `main` に「Require status checks to pass」を追加し、5 つのジョブを指定する。
 
 ## 2. バージョンの決め方
 

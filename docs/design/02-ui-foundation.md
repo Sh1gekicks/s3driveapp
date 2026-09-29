@@ -454,7 +454,7 @@ img, svg { -webkit-user-drag: none; }
 | 項目 | 方針 |
 |---|---|
 | アクセシブル名 | アイコンだけのボタンには必ず `label` を付ける（DS の IconButton の必須項目） |
-| ファイル一覧 | `role="grid"`（リスト表示）で `aria-selected`、`aria-rowcount`／`aria-rowindex`（仮想化のため）を付ける。キーボード操作は [03 §10](03-screens.md#10-キーボードショートカット) |
+| ファイル一覧 | リスト表示・アイコン表示とも複数選択の `role="listbox"`（`aria-multiselectable`、名前はバケット名）とし、各項目を `role="option"`（`aria-selected`）にする。リスト表示は仮想化で画面外の行を描画しないため、`aria-setsize`／`aria-posinset` で全体の件数と位置を示す。列の見出し（並べ替え）はリストの外に置く。キーボード操作は [03 §10](03-screens.md#10-キーボードショートカット) |
 | ダイアログ | Base UI のフォーカストラップと、閉じたときのフォーカス復帰を使う |
 | 通知 | トーストは `aria-live="polite"`、エラーは `assertive` |
 | 色だけに頼らない | ストレージクラスや状態は色に加えて名前・アイコンで示す |
