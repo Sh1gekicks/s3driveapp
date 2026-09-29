@@ -378,8 +378,14 @@ export const ja = {
     daily: '日別コスト',
     forecast: (amount: string) => `月末予測 ${amount}`,
     footnote: 'コストは AWS Cost Explorer の見積もりです。反映まで最大 24 時間かかります。',
-    scopeTag: (key: string, value: string) => `このバケット（タグ: ${key}=${value}）`,
+    scopeTag: (key: string, value: string) => `タグ ${key}=${value} が付いた S3`,
     scopeAccount: (region: string) => `アカウント全体の S3（${region}）`,
+    scopeTagShort: (key: string, value: string) => `タグ ${key}=${value}`,
+    scopeAccountShort: 'アカウント全体の S3',
+    scopeTagHint: (key: string, value: string) =>
+      `タグ ${key}=${value} が付いたバケットの合計です（同じタグのバケットが複数あれば合算します）。Billing でタグを有効化した日以降の分だけが集計されます。`,
+    scopeAccountHint: (region: string) =>
+      `このバケットだけでなく、${region} の S3 すべて（ほかのバケットを含む）の金額です。バケットに付けたタグは自動では使いません。バケット単位で表示するには、設定の「コスト」でこのバケットのコスト配分タグを指定します。`,
     fetchedAt: (at: string) => `最終更新 ${at}`,
     notFetched: 'コスト情報はまだ取得していません',
     fetch: '取得',
@@ -423,6 +429,8 @@ export const ja = {
     useCostExplorer: 'Cost Explorer を使う',
     costExplorerNote: '1 リクエストあたり $0.01 の料金がかかります',
     costTag: 'コスト配分タグ',
+    costTagNote:
+      'バケットに付けて Billing で有効化したタグを、接続ごとに指定します。値をバケットごとに変えると、バケット単位のコストになります。',
     costTagKey: 'キー',
     costTagValue: '値',
     searchIndex: '検索インデックス',

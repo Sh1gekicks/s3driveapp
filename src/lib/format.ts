@@ -43,12 +43,18 @@ export function formatDate(value: string | Date | null | undefined): string {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 金額（米ドル。1 ドル以上は小数 2 桁、1 ドル未満は小数 3 桁）。 */
+const tinyUsd = new Intl.NumberFormat('en-US', { maximumSignificantDigits: 2 });
+
+/**
+ * 金額（米ドル。1 ドル以上は小数 2 桁、1 ドル未満は小数 3 桁）。
+ * 0.001 ドル未満は「$0.000」と区別できるよう有効数字 2 桁にする（$0.00029）。
+ */
 export function formatUsd(amount: number | null | undefined): string {
   if (amount == null || Number.isNaN(amount)) return '—';
-  const digits = Math.abs(amount) < 1 ? 3 : 2;
+  const abs = Math.abs(amount);
   const sign = amount < 0 ? '-' : '';
-  return `${sign}$${Math.abs(amount).toFixed(digits)}`;
+  if (abs > 0 && abs < 0.001) return `${sign}$${tinyUsd.format(abs)}`;
+  return `${sign}$${abs.toFixed(abs < 1 ? 3 : 2)}`;
 }
 
 /** 割合（小数 1 桁）。 */

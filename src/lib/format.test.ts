@@ -49,6 +49,13 @@ describe('金額・割合', () => {
     expect(formatUsd(-1.5)).toBe('-$1.50');
     expect(formatUsd(null)).toBe('—');
   });
+  it('0.001 ドル未満は有効数字 2 桁（$0.000 と区別する）', () => {
+    expect(formatUsd(0)).toBe('$0.000');
+    expect(formatUsd(0.00028738)).toBe('$0.00029');
+    expect(formatUsd(0.00099)).toBe('$0.00099');
+    expect(formatUsd(0.0000036)).toBe('$0.0000036');
+    expect(formatUsd(-0.0002)).toBe('-$0.0002');
+  });
   it('割合と増減', () => {
     expect(formatPercent(0.1234)).toBe('12.3%');
     expect(formatDelta(0.032)).toBe('+3.2%');

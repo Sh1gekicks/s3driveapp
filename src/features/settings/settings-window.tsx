@@ -301,6 +301,7 @@ function CostTab({ connections }: { connections: Connection[] }) {
         />
       </Section>
       <Section title={t.costTag}>
+        <p className="m-0 text-xs text-muted-foreground">{t.costTagNote}</p>
         {connections.map((c) => (
           <CostTagRow key={c.id} connection={c} />
         ))}
