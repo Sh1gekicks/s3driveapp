@@ -267,7 +267,6 @@ export function CredentialsDialog({ credentialId, onClose }: Base & { credential
               mono
               autoFocus
               autoComplete="off"
-              spellCheck={false}
               placeholder="AKIA…"
             />
           )}
