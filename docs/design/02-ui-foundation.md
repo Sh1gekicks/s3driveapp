@@ -280,7 +280,7 @@
 | Button | `ui/button` | variant: default／secondary／outline／ghost／destructive／link。size: sm 24／md 28／lg 32px。13px・medium・角丸 6。1 画面に default は 1 つ | size 名を DS に合わせる。ホバーは背景を 6〜10% 濃く、押下はさらに濃く。拡大縮小しない |
 | IconButton | `ui/button`（icon サイズ）＋ `ui/tooltip` | `label` 必須（アクセシブル名とツールチップ）。`active` で押下状態 | `aria-label` と `aria-pressed` を付ける。ツールチップにショートカットを併記する |
 | Icon | `lucide-react` | 線幅 1.75。ツールバー・行 16px、小ボタン 14px、バッジ 12px、空状態 32px | 既定値を持つ `<Icon>` ラッパーを用意する |
-| Input | `ui/input`、`ui/field`、`ui/input-group` | ラベルは上、ヒント・エラーは下。高さ 28（sm 24）。先頭アイコン（検索）。入力文字は選択可 | 枠はヘアライン、背景 `--field-bg`、影 `--shadow-xs`。フォーカス時は枠も `--ring` |
+| Input | `ui/input`、`ui/field`、`ui/input-group` | ラベルは上、ヒント・エラーは下。高さ 28（sm 24）。先頭アイコン（検索）。入力文字は選択可。名前やキーを入力するため、自動の大文字化・修正・スペルチェックは既定で無効（`autocapitalize="off"`、`autocorrect="off"`、`spellcheck="false"`。WKWebView は macOS の「文頭を自動的に大文字にする」を入力欄にも適用する） | 枠はヘアライン、背景 `--field-bg`、影 `--shadow-xs`。フォーカス時は枠も `--ring` |
 | Select | `ui/native-select` | macOS のポップアップボタン（ネイティブの select ＋上下シェブロン） | WKWebView ではネイティブのメニューが開き macOS らしいため、Base UI の Select ではなく native-select を使う |
 | Checkbox | `ui/checkbox` | 14px。未確定状態あり | |
 | Switch | `ui/switch` | macOS 風トグル。設定行ではラベル左・スイッチ右 | |

@@ -141,6 +141,10 @@ describe('SCR-02 ファイルブラウザ', () => {
     await user.click(screen.getByRole('button', { name: '新規フォルダ' }));
     const dialog = await screen.findByRole('dialog');
     const input = within(dialog).getByLabelText('名前');
+    // macOS の自動の大文字化で先頭が大文字にならない
+    expect(input).toHaveAttribute('autocapitalize', 'off');
+    expect(input).toHaveAttribute('autocorrect', 'off');
+    expect(input).toHaveAttribute('spellcheck', 'false');
     await user.clear(input);
     await user.type(input, 'reports');
     await user.click(within(dialog).getByRole('button', { name: '作成' }));

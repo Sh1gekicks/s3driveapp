@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils';
 
 // DS: components/forms/Input.jsx と .s3-input。高さ 28（sm 24）、ヘアラインの枠、背景 --field-bg、影 --shadow-xs。
 // フォーカス時は枠も --ring。入力文字は選択できる（02 §6、§7.3）。
+// 入力するのは名前やキーなので、OS の自動の大文字化・修正・スペルチェックを既定で止める（02 §6）。
+// WKWebView は macOS の「文頭を自動的に大文字にする」を入力欄にも適用するため。
 
 export interface InputProps extends Omit<React.ComponentProps<typeof BaseInput>, 'size'> {
   icon?: LucideIcon;
@@ -32,6 +34,9 @@ export function Input({
         </span>
       ) : null}
       <BaseInput
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
         aria-invalid={invalid || undefined}
         className={cn(
           'h-(--control-h-md) w-full min-w-0 rounded-md border-[0.5px] border-input bg-field px-2 text-base leading-none text-foreground elevation-xs outline-none',

@@ -157,7 +157,6 @@ export function ConnectionForm({
                 {...register('accessKeyId')}
                 mono
                 autoComplete="off"
-                spellCheck={false}
                 autoCapitalize="characters"
                 placeholder="AKIA…"
               />
@@ -175,7 +174,6 @@ export function ConnectionForm({
             {...register('roleArn')}
             mono
             autoComplete="off"
-            spellCheck={false}
             placeholder="arn:aws:iam::123456789012:role/…"
           />
         )}
@@ -192,15 +190,7 @@ export function ConnectionForm({
           )}
         </Field>
         <Field label={t.bucket} error={err('bucket')}>
-          {(p) => (
-            <Input
-              {...p}
-              {...register('bucket')}
-              autoComplete="off"
-              spellCheck={false}
-              autoCapitalize="none"
-            />
-          )}
+          {(p) => <Input {...p} {...register('bucket')} autoComplete="off" />}
         </Field>
       </div>
       <button
@@ -214,7 +204,7 @@ export function ConnectionForm({
       </button>
       {advanced ? (
         <Field label={t.externalId} hint={t.externalIdHint} error={err('externalId')}>
-          {(p) => <Input {...p} {...register('externalId')} mono autoComplete="off" spellCheck={false} />}
+          {(p) => <Input {...p} {...register('externalId')} mono autoComplete="off" />}
         </Field>
       ) : null}
       {formError ? (
