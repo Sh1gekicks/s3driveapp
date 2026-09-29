@@ -76,10 +76,11 @@ PR の作成・更新時と、main への push 時に `.github/workflows/ci.yml`
 | `core` | ubuntu-latest | `cargo test -p s3drive-core --locked`（`s3drive-core` のビルドとテスト） |
 | `app` | macos-latest | `pnpm tauri build --debug --bundles app`（macOS 向けのデバッグビルド。アドホック署名を含む） |
 
-- `app` ジョブは、実行コストの高い macOS ランナーを使うため、`frontend` と `core` が成功してから実行する。
+- `app` ジョブは、ほかのジョブを待たずに並行して実行する（公開リポジトリでは標準の macOS ランナーも無料のため。[設計 08 §9](../design/08-cicd.md#9-実行時間とコスト)）。
+- CI の Rust のビルドは、デバッグ情報を行番号だけにしている（`CARGO_PROFILE_DEV_DEBUG: line-tables-only`）。
 - CI のビルド結果（`.app`）は成果物としてアップロードしない。配布物が必要な場合はリリースのワークフローを使う（[04](04-release.md)）。
 - 同じブランチで新しい push があると、実行中のワークフローはキャンセルされる（`concurrency`）。
-- pnpm のストア（`pnpm/setup` の `cache`）と Cargo のビルド結果（`Swatinem/rust-cache`）をキャッシュしている。目安の実行時間は `frontend` 約 2 分、`core` 約 3〜6 分、`app` 約 10 分。
+- Cargo のビルド結果（`Swatinem/rust-cache`）をキャッシュしている。pnpm のストアはキャッシュしない（理由は [設計 08 §9](../design/08-cicd.md#9-実行時間とコスト)）。目安の実行時間は `frontend` 約 2 分、`core` 約 3〜6 分、`app` 約 10 分。
 - すべて `--locked`（Cargo）と `require-lockfile: true`（pnpm）で実行する。ロックファイルとの食い違いはエラーになるため、依存を変えたら `Cargo.lock` と `pnpm-lock.yaml` もコミットする。
 
 ### 2.2 リリースのビルド（release.yml）
