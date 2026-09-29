@@ -354,7 +354,7 @@ function Versions({
             <span className={cn('mt-1 size-1.75 rounded-full', v.isLatest ? 'bg-primary' : 'bg-gray-400')} />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-0.75">
-            <div className="flex items-center gap-1.5 text-sm font-semibold tabular-nums">
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.75 text-sm font-semibold tabular-nums">
               <span className="whitespace-nowrap">{formatDate(v.lastModified)}</span>
               {v.isLatest && !v.isDeleteMarker ? <Badge variant="success">{t.latest}</Badge> : null}
               {v.isDeleteMarker ? <Badge variant="destructive">{ja.list.deleteMarker}</Badge> : null}
