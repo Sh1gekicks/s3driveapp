@@ -29,7 +29,7 @@ export function AppShell({
   inspector,
   overlayInspector,
   children,
-}: AppShellProps) {
+}: Readonly<AppShellProps>) {
   return (
     <div className="flex h-full overflow-hidden text-foreground">
       <aside

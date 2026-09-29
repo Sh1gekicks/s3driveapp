@@ -31,7 +31,7 @@ export function ResizeHandle({
   onChange,
   onCommit,
   className,
-}: ResizeHandleProps) {
+}: Readonly<ResizeHandleProps>) {
   const drag = useRef<{ x: number; value: number } | null>(null);
   /** キー操作で値を変え、まだ確定していない。 */
   const keyChanged = useRef(false);
@@ -52,8 +52,10 @@ export function ResizeHandle({
     return null;
   };
 
+  // フォーカスできる separator は WAI-ARIA 1.2 ではウィジェット（Window Splitter）で、キー操作を受け付ける。
+  // Sonar（S6845・S6847）は separator を常に非インタラクティブとみなすため、該当の行を除外する。
   return (
-    <div
+    <div // NOSONAR
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
@@ -61,7 +63,7 @@ export function ResizeHandle({
       aria-valuenow={value}
       aria-valuemin={min}
       aria-valuemax={max}
-      tabIndex={0}
+      tabIndex={0} // NOSONAR
       className={cn(
         'group absolute top-0 bottom-0 z-10 flex w-2 cursor-col-resize touch-none justify-center outline-none',
         className,
