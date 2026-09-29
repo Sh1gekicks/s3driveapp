@@ -15,7 +15,7 @@ import type { Entry } from '@/lib/ipc';
 import { installMock } from '@/lib/ipc/mock';
 import type { MockBackend, MockOptions } from '@/lib/ipc/mock/backend';
 import { useNavStore } from '@/stores/nav';
-import { NO_FILTERS, useUiStore } from '@/stores/ui';
+import { NO_FILTERS, SIDEBAR_WIDTH, useUiStore } from '@/stores/ui';
 
 export type User = ReturnType<typeof userEvent.setup>;
 
@@ -33,10 +33,13 @@ export function resetScreen() {
     filtersOpen: false,
     showDeleted: false,
     inspectorVisible: true,
+    sidebarWidth: SIDEBAR_WIDTH.default,
     dialog: null,
   });
   // jsdom にない API。仮想スクロールが行を描けるよう、要素の寸法を与える
   window.HTMLElement.prototype.scrollTo = () => {};
+  // サイドバーの幅変更のつまみがドラッグ中に使う
+  window.HTMLElement.prototype.setPointerCapture = () => {};
   Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 800 });
   Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 1000 });
   // 寸法は上で固定しているため、変化を知らせる必要はない（何もしない）

@@ -33,7 +33,8 @@ Tauri に依存しないよう `s3drive-core` の `SettingsStore` で読み書�
   "view": {
     "mode": "list",
     "sort": { "key": "name", "dir": 1 },
-    "inspector": true
+    "inspector": true,
+    "sidebarWidth": 220
   },
   "transfer": {
     "maxFiles": 3,
@@ -80,6 +81,7 @@ Tauri に依存しないよう `s3drive-core` の `SettingsStore` で読み書�
 | `general.showHidden` | 隠しファイルを表示 | `false` |
 | `general.showMenuBarIcon` | メニューバーに表示 | `true` |
 | `view.*` | 表示モード・並べ替え・インスペクタの表示 | リスト・名前昇順・表示 |
+| `view.sidebarWidth` | サイドバーの幅（px）。180〜360 に収める | `220` |
 | `transfer.maxFiles` / `maxPartsPerFile` | 並列数 | 3 / 4 |
 | `transfer.multipartThresholdMb` | マルチパートにする最小サイズ | 16 |
 | `transfer.defaultStorageClass` | アップロード時のストレージクラス（接続の `defaultStorageClass` が優先） | `STANDARD` |

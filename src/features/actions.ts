@@ -534,11 +534,11 @@ export function runSelectionAction(action: SelectionAction, items: Entry[] = sel
 
 // ---- 表示の切り替え ------------------------------------------------------------------------
 
-/** 表示の設定（表示モード・並べ替え・インスペクタ）を保存する（01 §5.4）。 */
+/** 表示の設定（表示モード・並べ替え・インスペクタ・サイドバーの幅）を保存する（01 §5.4）。 */
 export function persistView() {
-  const { viewMode, sort, inspectorVisible } = useUiStore.getState();
+  const { viewMode, sort, inspectorVisible, sidebarWidth } = useUiStore.getState();
   void ipc.app
-    .updateSettings({ view: { mode: viewMode, sort, inspector: inspectorVisible } })
+    .updateSettings({ view: { mode: viewMode, sort, inspector: inspectorVisible, sidebarWidth } })
     .catch(() => {});
 }
 

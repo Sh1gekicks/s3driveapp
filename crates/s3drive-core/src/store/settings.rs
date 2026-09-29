@@ -114,6 +114,7 @@ impl SettingsStore {
                     .detail(format!("invalid settings: {e}"))
             })?;
             settings.transfer = settings.transfer.clamped();
+            settings.view = settings.view.clamped();
             file.settings = settings.clone();
             Ok(settings)
         })
@@ -177,11 +178,16 @@ mod tests {
         let path = dir.path().join("settings.json");
         let store = SettingsStore::load(&path).unwrap();
         let s = store
-            .patch(serde_json::json!({ "general": { "appearance": "dark" }, "transfer": { "maxFiles": 20 } }))
+            .patch(serde_json::json!({
+                "general": { "appearance": "dark" },
+                "transfer": { "maxFiles": 20 },
+                "view": { "sidebarWidth": 1000 }
+            }))
             .unwrap();
         assert_eq!(s.general.appearance, Appearance::Dark);
         assert!(!s.general.show_hidden);
         assert_eq!(s.transfer.max_files, 8);
+        assert_eq!(s.view.sidebar_width, 360);
 
         let reloaded = SettingsStore::load(&path).unwrap();
         assert_eq!(reloaded.settings().general.appearance, Appearance::Dark);
