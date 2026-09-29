@@ -254,7 +254,7 @@ PR の作成・更新時と、main への push 時に自動で実行される。
 | `frontend` | ubuntu-latest | `pnpm biome ci .`、`pnpm typecheck`、`pnpm vitest run --coverage`（行カバレッジの閾値あり）、`pnpm vite build` |
 | `ui` | ubuntu-latest（コンテナ: Playwright の公式イメージ） | `pnpm exec playwright test`（画面テストとビジュアル回帰テスト）。失敗時はレポートを成果物 `playwright-report` に保存 |
 | `core` | ubuntu-latest（サービス: moto 5.1.22） | `cargo fmt --all --check`、`cargo clippy -p s3drive-core --all-features`、`cargo llvm-cov -p s3drive-core --fail-under-lines 80`（`S3DRIVE_TEST_ENDPOINT` を設定し、結合テストも実行）、ts-rs の型定義の差分確認 |
-| `app` | macos-latest（`frontend`・`ui`・`core` の成功後） | `cargo clippy -p s3drive-app`（`e2e` 機能の有無の両方）、`cargo test -p s3drive-app`、デバッグビルド |
+| `app` | macos-latest（ほかのジョブを待たずに並行して実行） | `cargo clippy -p s3drive-app`（`e2e` 機能の有無の両方）、`cargo test -p s3drive-app`、デバッグビルド |
 | `audit` | ubuntu-latest | アクセスキー ID の形の文字列の検査、`cargo deny check`、`pnpm audit --prod --audit-level high` |
 
 - `core` ジョブは Linux で動くため、キーチェーンの代わりにメモリ上の実装でテストする。
