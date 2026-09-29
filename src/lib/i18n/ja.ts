@@ -313,6 +313,19 @@ export const ja = {
       install: 'アップデート',
       installing: 'ダウンロード中…',
       none: '最新のバージョンを使用しています',
+      transfersActive: (count: number) =>
+        `${n(count)} 件の転送が完了していません。アップデートの適用には S3 Drive の再起動が必要です。`,
+      transfersHint:
+        '転送が終わるのを待ってから再起動するか、転送を中止してすぐに再起動するかを選んでください。',
+      afterTransfers: '転送の完了後に再起動',
+      restartNow: '転送を中止して再起動',
+      scheduled: 'アップデートをインストールしました',
+      scheduledDesc: '転送が終わったら S3 Drive を再起動します。',
+    },
+    signOut: {
+      title: 'サインアウトしますか？',
+      description: (count: number) =>
+        `${n(count)} 件の転送が完了していません。サインアウトすると転送を中止します。`,
     },
   },
   toast: {
@@ -389,6 +402,7 @@ export const ja = {
       `このバケットだけでなく、${region} の S3 すべて（ほかのバケットを含む）の金額です。バケットに付けたタグは自動では使いません。バケット単位で表示するには、設定の「コスト」でこのバケットのコスト配分タグを指定します。`,
     fetchedAt: (at: string) => `最終更新 ${at}`,
     notFetched: 'コスト情報はまだ取得していません',
+    refreshFailed: 'コストを更新できませんでした。前回取得した結果を表示しています。',
     fetch: '取得',
     fetchCost: '1 回あたり約 $0.05',
     staleMonth: (month: string) => `${month}の結果です。「更新」で当月分を取得します`,
@@ -418,6 +432,10 @@ export const ja = {
     maxParts: '1 ファイルあたりの並列数',
     multipartThreshold: 'マルチパートにする最小サイズ',
     defaultStorageClass: 'アップロード時のストレージクラス',
+    connectionStorageClass: '接続ごとのストレージクラス',
+    connectionStorageClassNote:
+      'アップロード時のストレージクラスを接続ごとに変えられます。「既定」は上の設定に従います。',
+    followDefault: (label: string) => `既定（${label}）`,
     normalizeNfc: 'ファイル名を NFC に正規化する',
     ignoreDsStore: '.DS_Store を除外する',
     notifyOnComplete: '完了時に通知する',
@@ -427,6 +445,9 @@ export const ja = {
     addBucket: 'バケットを追加…',
     authStatic: 'アクセスキー',
     authRole: 'AssumeRole',
+    sourceIdentity: 'SourceIdentity（AssumeRole）',
+    sourceIdentityNote:
+      'オンにすると、ロールを引き受けるときに SourceIdentity にメールアドレスを設定し、CloudTrail で操作したアカウントを追跡できます。ロールの信頼ポリシーで sts:SetSourceIdentity を許可してください。',
     useCostExplorer: 'Cost Explorer を使う',
     costExplorerNote: '1 リクエストあたり $0.01 の料金がかかります',
     costTag: 'コスト配分タグ',

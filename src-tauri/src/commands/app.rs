@@ -1,5 +1,8 @@
 //! 設定・アプリ（05 §3.8）。
 
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
 use s3drive_core::model::{Appearance, MenuState, Settings, StartupInfo, UpdateEvent, UpdateInfo};
 use s3drive_core::{CoreError, ErrorCode};
 use tauri::ipc::Channel;
@@ -133,8 +136,34 @@ pub async fn app_check_update(app: AppHandle) -> CmdResult<Option<UpdateInfo>> {
 }
 
 /// 更新をダウンロードし、署名を検証してから適用して再起動する（08 §7）。
+///
+/// 転送中の場合はフロントエンドが確認し、`when_idle` で結果を渡す。真なら転送が終わるのを待ってから再起動し
+/// （待つ間にコマンドは戻る）、偽なら転送を中止してから再起動する。
 #[tauri::command]
-pub async fn app_install_update(app: AppHandle, on_event: Channel<UpdateEvent>) -> CmdResult<()> {
+pub async fn app_install_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    on_event: Channel<UpdateEvent>,
+    when_idle: Option<bool>,
+) -> CmdResult<()> {
+    // インストール済みで再起動を待っている場合は、ダウンロードし直さない
+    if !state.restart_pending.load(Ordering::Relaxed) {
+        download_and_install(&app, on_event).await?;
+        state.restart_pending.store(true, Ordering::Relaxed);
+    }
+    if when_idle.unwrap_or(false) && state.core.transfers().summary().0 > 0 {
+        let core = state.core.clone();
+        tauri::async_runtime::spawn(async move {
+            core.transfers().wait_idle().await;
+            restart(&app).await;
+        });
+        return Ok(());
+    }
+    restart(&app).await;
+    Ok(())
+}
+
+async fn download_and_install(app: &AppHandle, on_event: Channel<UpdateEvent>) -> CmdResult<()> {
     let update = app
         .updater()
         .map_err(|e| CoreError::internal(e.to_string()))?
@@ -164,6 +193,18 @@ pub async fn app_install_update(app: AppHandle, on_event: Channel<UpdateEvent>) 
             CoreError::with_message(ErrorCode::Network, "アップデートを適用できませんでした")
                 .detail(e.to_string())
         })?;
+    Ok(())
+}
+
+/// 残っている転送を中止してから（終了と同じく 3 秒を上限に中止処理を行う。04 §14.4）再起動する。
+async fn restart(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.quitting.store(true, Ordering::Relaxed);
+    state
+        .core
+        .transfers()
+        .shutdown(Duration::from_secs(3))
+        .await;
     app.restart();
 }
 

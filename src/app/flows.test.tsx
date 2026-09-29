@@ -4,10 +4,12 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { uploadSelection } from '@/features/actions';
+import { signOut, uploadSelection } from '@/features/actions';
 import { handleCommand } from '@/features/commands';
+import type { CostSummary, TransferJob } from '@/lib/ipc';
 import { registerBrowserFiles } from '@/lib/ipc/mock';
 import { useNavStore } from '@/stores/nav';
+import { useTransferStore } from '@/stores/transfers';
 import { useUiStore } from '@/stores/ui';
 import { entry, fileList, findToast, renderWithMock, resetScreen, select } from '@/test/harness';
 
@@ -17,7 +19,43 @@ vi.mock('@/app/query-client', () => ({
   }),
 }));
 
-beforeEach(resetScreen);
+beforeEach(() => {
+  resetScreen();
+  useTransferStore.setState({ jobs: {} });
+});
+
+/** 転送中のジョブ（サインアウト・アップデートの確認に使う）。 */
+function runningTransfer(): TransferJob {
+  return {
+    jobId: 'job-running',
+    kind: 'upload',
+    connectionId: 'conn-tokyo',
+    title: '1 件をアップロード中',
+    status: 'running',
+    totalFiles: 1,
+    doneFiles: 0,
+    failedFiles: 0,
+    totalBytes: 1000,
+    doneBytes: 100,
+    currentName: 'big.bin',
+    bytesPerSec: 0,
+    etaSec: null,
+    destination: 'acme-media-tokyo/',
+  };
+}
+
+/** タグ Name=s3drive のコスト（0.001 ドル未満）。 */
+const TAGGED_COST: CostSummary = {
+  scope: { kind: 'tag', key: 'Name', value: 's3drive' },
+  month: '2026-09',
+  monthToDate: 0.00028738,
+  prevMonthSamePeriod: 0,
+  breakdown: { storage: 0, requests: 0.00028738, transfer: 0, retrieval: 0, other: 0 },
+  daily: Array.from({ length: 30 }, (_, i) => (i < 27 ? 0 : i === 27 ? 0.00028738 : null)),
+  forecastMonthEnd: null,
+  currency: 'USD',
+  fetchedAt: '2026-09-28T23:19:50Z',
+};
 
 describe('アップロード（04 §4）', () => {
   it('選んだファイルをアップロードすると一覧に表示され、完了を知らせる', async () => {
@@ -260,21 +298,7 @@ describe('ストレージとコスト（SCR-03）', () => {
   });
 
   it('コスト配分タグがあれば、そのタグが付いたバケットの合計として 0.001 ドル未満も示す', async () => {
-    renderWithMock({
-      before: (b) => {
-        b.costs.set('conn-tokyo', {
-          scope: { kind: 'tag', key: 'Name', value: 's3drive' },
-          month: '2026-09',
-          monthToDate: 0.00028738,
-          prevMonthSamePeriod: 0,
-          breakdown: { storage: 0, requests: 0.00028738, transfer: 0, retrieval: 0, other: 0 },
-          daily: Array.from({ length: 30 }, (_, i) => (i < 27 ? 0 : i === 27 ? 0.00028738 : null)),
-          forecastMonthEnd: null,
-          currency: 'USD',
-          fetchedAt: '2026-09-28T23:19:50Z',
-        });
-      },
-    });
+    renderWithMock({ before: (b) => b.costs.set('conn-tokyo', TAGGED_COST) });
     await within(await fileList()).findByText('logo.png');
     act(() => handleCommand('go.dashboard'));
     expect(await screen.findByText('タグ Name=s3drive')).toBeInTheDocument();
@@ -282,6 +306,26 @@ describe('ストレージとコスト（SCR-03）', () => {
     expect(screen.getAllByText('$0.00029')).toHaveLength(3);
     expect(screen.getByText(/同じタグのバケットが複数あれば合算します/)).toBeInTheDocument();
     expect(screen.getByText(/^タグ Name=s3drive が付いた S3/)).toBeInTheDocument();
+  });
+
+  it('「更新」に失敗したら、前回の結果を表示したままカード内に理由を示す（03 §6）', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderWithMock({ before: (b) => b.costs.set('conn-tokyo', TAGGED_COST) });
+    await within(await fileList()).findByText('logo.png');
+    act(() => handleCommand('go.dashboard'));
+    expect(await screen.findByText('タグ Name=s3drive')).toBeInTheDocument();
+    backend.failNext(
+      'cost_refresh',
+      'COST_UNAVAILABLE',
+      'Cost Explorer にアクセスする権限がありません（ce:GetCostAndUsage）',
+    );
+    await user.click(screen.getByRole('button', { name: /Cost Explorer の料金/ }));
+    expect(await screen.findByText(/コストを更新できませんでした/)).toBeInTheDocument();
+    expect(screen.getByText(/ce:GetCostAndUsage/)).toBeInTheDocument();
+    expect(screen.getAllByText('$0.00029')).toHaveLength(3);
+    // 別の接続を開いたときは表示しない
+    act(() => useNavStore.getState().openConnection('conn-osaka'));
+    await waitFor(() => expect(screen.queryByText(/コストを更新できませんでした/)).toBeNull());
   });
 
   it('CloudWatch のメトリクスもインデックスもなければ、インデックスを作成して集計する', async () => {
@@ -297,5 +341,63 @@ describe('ストレージとコスト（SCR-03）', () => {
     await user.click(screen.getByRole('button', { name: 'インデックスを作成' }));
     expect(await screen.findByText('インデックスから集計（現行バージョンのみ）')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'インデックスを作成' })).toBeNull();
+  });
+});
+
+describe('サインアウト（04 §1.4）', () => {
+  it('転送中なら確認し、サインアウトすると転送を中止する', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderWithMock();
+    await within(await fileList()).findByText('logo.png');
+    act(() => useTransferStore.getState().upsert(runningTransfer()));
+    await act(() => signOut());
+    const dialog = await screen.findByRole('alertdialog');
+    expect(
+      within(dialog).getByText('1 件の転送が完了していません。サインアウトすると転送を中止します。'),
+    ).toBeInTheDocument();
+    expect(backend.calls.some((c) => c.cmd === 'auth_sign_out')).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: 'サインアウト' }));
+    await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'auth_sign_out')).toBe(true));
+    expect(await screen.findByRole('button', { name: 'Google でサインイン' })).toBeInTheDocument();
+  });
+
+  it('転送がなければ確認せずにサインアウトする', async () => {
+    const { backend } = renderWithMock();
+    await within(await fileList()).findByText('logo.png');
+    await act(() => signOut());
+    expect(backend.calls.some((c) => c.cmd === 'auth_sign_out')).toBe(true);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+});
+
+describe('アップデートの適用（08 §7）', () => {
+  it('転送がなければ、すぐに適用して再起動する', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderWithMock();
+    await within(await fileList()).findByText('logo.png');
+    act(() => useUiStore.getState().openDialog({ type: 'update', version: '0.3.0', notes: null }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'アップデート' }));
+    await waitFor(() =>
+      expect(backend.calls.find((c) => c.cmd === 'app_install_update')?.args.whenIdle).toBe(false),
+    );
+  });
+
+  it('転送中なら、転送の完了後に再起動するかを確認する', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderWithMock();
+    await within(await fileList()).findByText('logo.png');
+    act(() => useTransferStore.getState().upsert(runningTransfer()));
+    act(() => useUiStore.getState().openDialog({ type: 'update', version: '0.3.0', notes: null }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'アップデート' }));
+    expect(within(dialog).getByText(/1 件の転送が完了していません。/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '転送を中止して再起動' })).toBeInTheDocument();
+    expect(backend.calls.some((c) => c.cmd === 'app_install_update')).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: '転送の完了後に再起動' }));
+    await waitFor(() =>
+      expect(backend.calls.find((c) => c.cmd === 'app_install_update')?.args.whenIdle).toBe(true),
+    );
+    expect(await findToast('アップデートをインストールしました')).toBeInTheDocument();
   });
 });

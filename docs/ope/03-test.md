@@ -29,7 +29,7 @@ pnpm typecheck
 ```
 
 ```bash
-pnpm test
+pnpm vitest run --coverage
 ```
 
 ```bash
@@ -37,7 +37,11 @@ cargo fmt --all --check
 ```
 
 ```bash
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo clippy -p s3drive-core --all-targets --all-features --locked -- -D warnings
+```
+
+```bash
+cargo clippy -p s3drive-app --all-targets --locked -- -D warnings
 ```
 
 ```bash
@@ -52,7 +56,10 @@ cargo test --workspace --locked
 git diff --exit-code -- src/lib/ipc/bindings
 ```
 
+- clippy は CI と同じく、`s3drive-core` はすべての機能（ベンチマークの `bench` を含む）で、`s3drive-app` は `e2e` 機能なし（リリースと同じ構成）とありの両方で検査する。`s3drive-app` の検査とテストは macOS で行う（CI の `app` ジョブ）。
+- `pnpm vitest run --coverage` は、`src/lib`・`src/features` の行カバレッジが 70% 未満なら失敗する（CI の `frontend` ジョブと同じ。§2.1）。
 - `cargo test` は ts-rs の型定義（`src/lib/ipc/bindings`）を書き出す。最後の `git diff` で差分が出た場合は、書き出された型定義をコミットする。
+- 画面テストとビジュアル回帰テスト（CI の `ui` ジョブ）は §2.3 の手順で実行する。
 - 書式の違反は、`pnpm biome check --write .` と `cargo fmt --all` で自動修正できる。
 
 ## 2. ローカルでのテスト
@@ -104,7 +111,7 @@ S3DRIVE_TEST_ENDPOINT=http://localhost:5000 cargo test -p s3drive-core --test mo
 
 - 結合テストはテストごとにバケットを作るため、事前のバケットの作成は不要。
 - 終わったら moto を停止する: `docker compose -f docker-compose.test.yml down`
-- 5000 番ポートで `403 Forbidden` になる場合や起動できない場合は、AirPlay レシーバーが原因（[01 §7](01-local-setup.md#7-トラブルシューティング)）。システム設定を変えずに済ませるには、moto を別のポートで起動して `S3DRIVE_TEST_ENDPOINT` を合わせる（[§2.3](#23-e2e-テスト) の例を参照）。
+- 5000 番ポートで `403 Forbidden` になる場合や起動できない場合は、AirPlay レシーバーが原因（[01 §7](01-local-setup.md#7-トラブルシューティング)）。システム設定を変えずに済ませるには、moto を別のポートで起動して `S3DRIVE_TEST_ENDPOINT` を合わせる（[§2.5](#25-e2e-テスト) の例を参照）。
 
 カバレッジを CI と同じ条件（行カバレッジ 80% 未満で失敗）で取る場合は、cargo-llvm-cov を使う。
 

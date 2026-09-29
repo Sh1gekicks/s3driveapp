@@ -13,6 +13,8 @@ pub struct AppState {
     pub core: Core,
     /// 終了の確認を済ませた（再度の確認を避ける）。
     pub quitting: AtomicBool,
+    /// アップデートをインストール済みで、転送の完了後に再起動する（08 §7）。
+    pub restart_pending: AtomicBool,
 }
 
 /// 秘密情報の保存先。macOS はキーチェーン、それ以外（開発時の Linux など）はメモリ上に置く。
@@ -83,6 +85,7 @@ pub fn init(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(AppState {
         core,
         quitting: AtomicBool::new(false),
+        restart_pending: AtomicBool::new(false),
     });
     Ok(())
 }

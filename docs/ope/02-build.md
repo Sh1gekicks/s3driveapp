@@ -73,7 +73,8 @@ PR の作成・更新時と、main への push 時に `.github/workflows/ci.yml`
 | ジョブ | ランナー | ビルドの内容 |
 |---|---|---|
 | `frontend` | ubuntu-latest | `pnpm vite build`（フロントエンドのビルド） |
-| `core` | ubuntu-latest | `cargo test -p s3drive-core --locked`（`s3drive-core` のビルドとテスト） |
+| `ui` | ubuntu-latest（コンテナ: Playwright の公式イメージ） | Playwright が起動するモックバックエンドの開発サーバー（ビルドの成果物は作らない） |
+| `core` | ubuntu-latest | `cargo llvm-cov -p s3drive-core --locked --fail-under-lines 80`（`s3drive-core` のビルドと、moto を使う結合テストを含むテスト） |
 | `app` | macos-latest | `pnpm tauri build --debug --bundles app`（macOS 向けのデバッグビルド。アドホック署名を含む） |
 
 - `app` ジョブは、ほかのジョブを待たずに並行して実行する（公開リポジトリでは標準の macOS ランナーも無料のため。[設計 08 §9](../design/08-cicd.md#9-実行時間とコスト)）。

@@ -25,3 +25,10 @@ export const useTransferStore = create<TransferState>((set) => ({
 export function isActive(job: TransferJob): boolean {
   return job.status === 'queued' || job.status === 'running';
 }
+
+/** 転送中（待機中を含む）のジョブの数（サインアウトとアップデートの適用の前に確認する。04 §1.4、08 §7）。 */
+export function activeTransferCount(
+  jobs: Record<string, TransferJob> = useTransferStore.getState().jobs,
+): number {
+  return Object.values(jobs).filter(isActive).length;
+}

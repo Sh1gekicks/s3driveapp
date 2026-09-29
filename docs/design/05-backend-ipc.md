@@ -36,9 +36,9 @@ impl<E: serde::Serialize + Clone + Send + Sync + 'static> ProgressSink<E> for Ch
 | `connections` | `ConnectionService::{list, test, create, update, patch, delete, reorder, credential_list, credential_update, bucket_info}`、`ConnCtx` | 接続・認証情報の管理。接続ごとのクライアントとバケット情報を `ConnCtx` にまとめ、`Core` が接続 ID ごとにキャッシュする |
 | `objects` | `ObjectService::{list_page, head, create_folder, folder_summary, folder_children, find_conflicts, delete, move_objects, rename, change_storage_class, request_restore, check_restores}` | オブジェクト・フォルダ操作 |
 | `versions` | `VersionService::{list, restore, delete, undelete}` | バージョン管理 |
-| `transfer` | `Core::{upload_prepare, upload_start, download_start, transfer_retry, abort_stale_uploads}`、`TransferManager::{subscribe, enqueue, cancel, shutdown}`、`multipart` | 転送キューと実行 |
+| `transfer` | `Core::{upload_prepare, upload_start, download_start, transfer_retry, abort_stale_uploads}`、`TransferManager::{subscribe, enqueue, cancel, shutdown, wait_idle}`、`multipart` | 転送キューと実行 |
 | `search` | `IndexRunner`（全件走査）、`upsert`／`remove`（アプリ自身の変更の反映）、`SearchService::{query, status, rebuild, delete}` | 検索インデックス |
-| `metrics` | `StorageMetricsService`（CloudWatch）、`CostService`（Cost Explorer）、`PricingService` | 容量・コスト・単価 |
+| `metrics` | `Core::{metrics_storage, cost_summary, cost_refresh, pricing_get, clear_metrics_cache}`、`storage`（CloudWatch）、`cost`（Cost Explorer）、`pricing`（Price List） | 容量・コスト・単価 |
 | `jobs` | `JobRegistry`、`JobHandle`、`JobId` | ジョブの登録・キャンセル |
 | `selection` | `SelectionRegistry` | ファイル選択・ドロップで得たローカルパスの保管（§3.9） |
 | `store` | `Db`（コネクションプール）、`migrations.sql`、`SettingsStore`、`SecretStore`（`KeyringSecretStore`／テスト用の `MemorySecretStore`）、`metrics_cache` | 永続化（[06-data.md](06-data.md)） |
@@ -48,8 +48,9 @@ impl<E: serde::Serialize + Clone + Send + Sync + 'static> ProgressSink<E> for Ch
 
 ```rust
 pub struct AppState {
-    pub core: s3drive_core::Core, // サービス群のファサード
-    pub quitting: AtomicBool,     // 終了の確認を済ませた
+    pub core: s3drive_core::Core,    // サービス群のファサード
+    pub quitting: AtomicBool,        // 終了の確認を済ませた
+    pub restart_pending: AtomicBool, // アップデートをインストール済みで、転送の完了後に再起動する（08 §7）
 }
 
 #[derive(Clone)]
@@ -330,7 +331,7 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | `app_open_logs` | — | — | ログフォルダを Finder で開く |
 | `app_clear_cache` | — | — | メトリクス・コストなどのキャッシュを削除する |
 | `app_check_update` | — | `{ version, notes } \| null` | 更新の確認 |
-| `app_install_update` | `onEvent: Channel<UpdateEvent>` | — | 更新のダウンロードと適用、再起動 |
+| `app_install_update` | `onEvent: Channel<UpdateEvent>`、`whenIdle?` | — | 更新のダウンロードと適用、再起動（[08 §7](08-cicd.md#7-自動更新)）。転送中の場合はフロントエンドが確認し、`whenIdle` が真なら適用後に戻り、転送がなくなってから再起動する。偽なら転送を中止して再起動する（戻らない） |
 
 ### 3.9 ローカルパスの受け渡し
 

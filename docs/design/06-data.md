@@ -15,7 +15,7 @@
 | ダウンロード中の一時ファイル | 保存先フォルダの `*.s3drive-download` | — | × |
 
 - 検索インデックスにはファイル名（キー）が含まれるため、端末のディスク暗号化（FileVault）を前提とする。`Application Support` は iCloud と同期されない。
-- 開発ビルドはバンドル ID に `.dev` を付け、保存先とキーチェーンのサービス名を本番と分ける。
+- 開発ビルド（debug。E2E 用のビルドを含む）は、設定・SQLite の保存先フォルダ（`io.github.sh1gekicks.s3drive.dev`）とキーチェーンのサービス名に `.dev` を付けて本番と分ける。バンドル ID は変えないため、ログ（`~/Library/Logs/io.github.sh1gekicks.s3drive/`）とウィンドウの位置・サイズ（`~/Library/Application Support/io.github.sh1gekicks.s3drive/`）は本番と共通になる。
 
 ## 2. 設定ファイル
 
@@ -89,6 +89,8 @@ Tauri に依存しないよう `s3drive-core` の `SettingsStore` で読み書�
 | `transfer.ignore` | 除外するファイル名 | `[".DS_Store"]` |
 | `cost.useCostExplorer` | Cost Explorer の利用（取得は手動の「更新」のみ） | `true` |
 | `search.autoRefreshMinutes` | インデックスを自動更新するまでの時間（0 は手動のみ） | 60 |
+| `accounts.*.connections[].defaultStorageClass` | 接続ごとのアップロード時のストレージクラス（`null` は `transfer.defaultStorageClass` に従う。設定の「転送」で変更する） | `null` |
+| `accounts.*.connections[].useSourceIdentity` | AssumeRole で `SourceIdentity` にメールアドレスを設定する（設定の「接続」で変更する。[04 §2.3](04-features.md#23-セッション名と監査)） | `false` |
 | `accounts.*.connections[].endpointUrl` | エンドポイントの上書き。テスト用で、開発ビルドでのみ有効 | `null` |
 
 - 読み込み時に `version` を確認し、古い形式なら `settings.json.bak` に退避してから変換する。
@@ -138,6 +140,7 @@ erDiagram
     text parent
     integer size
     text last_modified
+    text etag
     text storage_class
     integer is_marker
     integer generation
@@ -184,6 +187,7 @@ erDiagram
     text connection_id PK
     text kind PK
     text payload
+    text fetched_at
     text expires_at
   }
 ```

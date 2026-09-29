@@ -497,9 +497,7 @@ pub(super) async fn run(
         .first_or_octet_stream()
         .essence_str()
         .to_string();
-    let threshold = job.options.multipart_threshold_mb as u64 * multipart::MIB;
-
-    let etag = if file.size < threshold {
+    let etag = if !multipart::uses_multipart(file.size, job.options.multipart_threshold_mb) {
         let data = tokio::fs::read(&file.path)
             .await
             .map_err(|e| CoreError::local_io(&file.path, &e))?;

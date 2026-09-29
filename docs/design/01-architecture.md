@@ -223,7 +223,7 @@ flowchart LR
 
 | ストア | 主な状態 |
 |---|---|
-| `useUiStore` | `view`、`viewMode`（`list`／`grid`）、`sort`（キーと向き）、`selection`（選択キーと起点）、`inspector`（表示／タブ）、`sidebarWidth`、`query`、`filters`（種類・拡張子・サイズ・期間・クラス）、`filtersOpen`、`dialog`（種類とペイロード）、`contextMenu` |
+| `useUiStore` | `view`、`viewMode`（`list`／`grid`）、`sort`（キーと向き）、`selection`（選択キーと起点）、`inspectorVisible`・`inspectorTab`、`sidebarWidth`、`query`、`filters`（種類・拡張子・サイズ・期間・クラス）、`filtersOpen`、`showDeleted`（削除済みの項目を表示）、`dialog`（種類とペイロード）。コンテキストメニューの開閉は Base UI のメニューが持つため、ストアには置かない |
 | `useNavStore` | `connectionId`、`prefix`、`back[]`、`forward[]` |
 | `useTransferStore` | 転送ジョブの一覧と進捗（転送チャネルのイベントで更新） |
 
@@ -383,7 +383,7 @@ minimumReleaseAge: 1440
 
 TypeScript 7 は、6.0 で非推奨になった設定をエラーとして扱い、いくつかの既定値も変わった。これに合わせて次の設定にする。
 
-`tsconfig.app.json`（`src` 用）の例。`vite.config.ts` 用の `tsconfig.node.json` は `"types": ["node"]` とし、`tsconfig.json` から両方を参照する。
+`tsconfig.app.json`（`src` 用）の例。`vite.config.ts`・`playwright.config.ts`・`tests/ui` 用の `tsconfig.node.json` は `"types": ["node"]` とし、E2E（`e2e/`）用の `tsconfig.e2e.json`（`"types": ["node", "@wdio/globals/types", "@wdio/mocha-framework"]`）とあわせて、`tsconfig.json` から 3 つを参照する。
 
 ```json
 {
@@ -413,7 +413,7 @@ TypeScript 7 は、6.0 で非推奨になった設定をエラーとして扱い
 | `noUncheckedSideEffectImports` | 既定で有効になった。`import './styles/globals.css'` のような副作用のためのインポートも、`vite/client` の型で解決できることが前提になる |
 | `strict` | 既定で有効になったが、明示しておく |
 | `erasableSyntaxOnly` | 有効にし、enum・namespace・コンストラクタ引数によるプロパティ宣言を使わない。型を取り除くだけで JavaScript になる書き方に揃える（ts-rs が生成する型も文字列リテラルの共用体で、この方針に合う） |
-| 型検査 | `pnpm typecheck`（`tsc -b`）で `tsconfig.app.json` と `tsconfig.node.json` をまとめて検査する |
+| 型検査 | `pnpm typecheck`（`tsc -b`）で `tsconfig.app.json`・`tsconfig.node.json`・`tsconfig.e2e.json` をまとめて検査する |
 | API を使うツール | 7.0 にはプログラムから使う API がない（7.1 で新しい API が提供される予定）。どうしても必要な場合は、互換パッケージ `@typescript/typescript6`（コマンドは `tsc6`）を併用する |
 | エディタ | VS Code では TypeScript 7 用の拡張機能を使う |
 

@@ -2,7 +2,7 @@
 // Cost Explorer への問い合わせは「更新」「取得」を押したときだけ行う（04 §13.4）。
 
 import { useQueryClient } from '@tanstack/react-query';
-import { Globe, HardDrive, History, type LucideIcon, Receipt, RefreshCw } from 'lucide-react';
+import { CircleAlert, Globe, HardDrive, History, type LucideIcon, Receipt, RefreshCw } from 'lucide-react';
 import * as React from 'react';
 import { create } from 'zustand';
 import { useBucketInfo, useCost, usePricing, useSettings, useStorageMetrics } from '@/app/queries';
@@ -42,7 +42,8 @@ const GB = 1e9;
 
 interface DashState {
   busy: boolean;
-  error: AppError | null;
+  /** 「更新」「取得」の失敗。接続ごとに持ち、別の接続を開いたときに表示しない。 */
+  error: { connectionId: string; error: AppError } | null;
 }
 const useDashStore = create<DashState>(() => ({ busy: false, error: null }));
 
@@ -53,6 +54,11 @@ function currentMonth(now = new Date()): string {
 function monthLabel(month: string): string {
   const m = Number(month.split('-')[1]);
   return Number.isFinite(m) ? `${m}月` : month;
+}
+
+/** 表示中の接続の「更新」「取得」の失敗。 */
+function useRefreshError(connectionId: string): AppError | null {
+  return useDashStore((s) => (s.error?.connectionId === connectionId ? s.error.error : null));
 }
 
 /** 「更新」: 利用容量と単価を取り直し、Cost Explorer に問い合わせる。 */
@@ -76,7 +82,7 @@ export function useDashboardRefresh(connection: Connection | null) {
         queryClient.setQueryData(qk.cost(id), cost);
       }
     } catch (e) {
-      useDashStore.setState({ error: ipc.toAppError(e) });
+      useDashStore.setState({ error: { connectionId: id, error: ipc.toAppError(e) } });
     } finally {
       await storage;
       useDashStore.setState({ busy: false });
@@ -171,7 +177,8 @@ function Kpi({
 function CostPlaceholder({ connection }: { connection: Connection }) {
   const settings = useSettings();
   const refresh = useDashboardRefresh(connection);
-  const { busy, error } = useDashStore();
+  const busy = useDashStore((s) => s.busy);
+  const error = useRefreshError(connection.id);
   if (settings.data && !settings.data.cost.useCostExplorer) {
     return <p className="m-0 text-sm text-muted-foreground">{t.disabled}</p>;
   }
@@ -277,6 +284,7 @@ export function Dashboard({ connection }: { connection: Connection }) {
   const ceEnabled = settings.data?.cost.useCostExplorer ?? true;
   const m = metrics.data;
   const c = ceEnabled ? (cost.data ?? null) : null;
+  const refreshError = useRefreshError(connection.id);
   const stale = c && c.month !== currentMonth() ? c.month : null;
 
   const rows = CLASS_ORDER.map((k) => {
@@ -411,6 +419,17 @@ export function Dashboard({ connection }: { connection: Connection }) {
         <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-4">
           <Card>
             <CardHead>{t.breakdown(monthLabel(c?.month ?? currentMonth()))}</CardHead>
+            {c && refreshError ? (
+              // 前回の結果を表示したまま、更新できなかった理由を示す（03 §6）
+              <div role="alert" className="mb-2 flex items-start gap-1.5 text-sm text-destructive">
+                <Icon icon={CircleAlert} size={14} className="mt-0.5 shrink-0" />
+                <span className="min-w-0 break-words">
+                  {t.refreshFailed}
+                  <br />
+                  {refreshError.message}
+                </span>
+              </div>
+            ) : null}
             {c ? (
               <div className="flex flex-col text-base">
                 {breakdown.map(([label, value]) => (

@@ -19,9 +19,16 @@ import { DialogHost } from '@/features/dialogs/dialog-host';
 import { showError } from '@/features/errors';
 import { formatDate } from '@/lib/format';
 import { ja } from '@/lib/i18n/ja';
-import type { Appearance, Connection, SettingsPatch, StorageClass, UserSession } from '@/lib/ipc';
+import type {
+  Appearance,
+  Connection,
+  ConnectionPatch,
+  SettingsPatch,
+  StorageClass,
+  UserSession,
+} from '@/lib/ipc';
 import * as ipc from '@/lib/ipc';
-import { SELECTABLE_CLASSES, STORAGE_CLASSES } from '@/lib/storage-class';
+import { classLabel, SELECTABLE_CLASSES, STORAGE_CLASSES } from '@/lib/storage-class';
 import { useUiStore } from '@/stores/ui';
 
 const t = ja.settings;
@@ -65,6 +72,19 @@ function useUpdateSettings() {
         .updateSettings(patch)
         .then((s) => queryClient.setQueryData(qk.settings, s))
         .catch((e) => showError(e, '設定を変更')),
+    [queryClient],
+  );
+}
+
+/** 接続ごとの設定の変更（確認は不要。05 §3.2）。 */
+function usePatchConnection() {
+  const queryClient = useQueryClient();
+  return React.useCallback(
+    (id: string, patch: ConnectionPatch, verb: string) =>
+      ipc.connections
+        .patch(id, patch)
+        .then(() => queryClient.invalidateQueries({ queryKey: qk.connections }))
+        .catch((e) => showError(e, verb)),
     [queryClient],
   );
 }
@@ -134,122 +154,183 @@ function GeneralTab() {
   );
 }
 
-function TransferTab() {
+/** 接続ごとのアップロード時のストレージクラス（未設定なら全体の設定に従う。04 §4.3）。 */
+function ConnectionClassRow({
+  connection,
+  fallback,
+}: Readonly<{ connection: Connection; fallback: StorageClass }>) {
+  const patch = usePatchConnection();
+  return (
+    <Row label={connection.bucket}>
+      <NativeSelect
+        size="sm"
+        aria-label={`${connection.bucket} ${t.defaultStorageClass}`}
+        wrapperClassName="w-52"
+        value={connection.defaultStorageClass ?? ''}
+        onChange={(e) =>
+          void patch(
+            connection.id,
+            { defaultStorageClass: (e.target.value || null) as StorageClass | null },
+            'ストレージクラスを変更',
+          )
+        }
+        options={[
+          { value: '', label: t.followDefault(classLabel(fallback)) },
+          ...SELECTABLE_CLASSES.map((c) => ({ value: c, label: STORAGE_CLASSES[c].label })),
+        ]}
+      />
+    </Row>
+  );
+}
+
+function TransferTab({ connections }: Readonly<{ connections: Connection[] }>) {
   const settings = useSettings().data;
   const update = useUpdateSettings();
   if (!settings) return <Skeleton className="h-40" />;
   const x = settings.transfer;
   const ignoresDsStore = x.ignore.includes('.DS_Store');
   return (
-    <Section>
-      <Row label={t.maxFiles}>
-        <NativeSelect
-          size="sm"
-          aria-label={t.maxFiles}
-          wrapperClassName="w-20"
-          value={String(x.maxFiles)}
-          onChange={(e) => void update({ transfer: { maxFiles: Number(e.target.value) } })}
-          options={range(1, 8)}
+    <>
+      <Section>
+        <Row label={t.maxFiles}>
+          <NativeSelect
+            size="sm"
+            aria-label={t.maxFiles}
+            wrapperClassName="w-20"
+            value={String(x.maxFiles)}
+            onChange={(e) => void update({ transfer: { maxFiles: Number(e.target.value) } })}
+            options={range(1, 8)}
+          />
+        </Row>
+        <Row label={t.maxParts}>
+          <NativeSelect
+            size="sm"
+            aria-label={t.maxParts}
+            wrapperClassName="w-20"
+            value={String(x.maxPartsPerFile)}
+            onChange={(e) => void update({ transfer: { maxPartsPerFile: Number(e.target.value) } })}
+            options={range(1, 16)}
+          />
+        </Row>
+        <Row label={t.multipartThreshold}>
+          <NativeSelect
+            size="sm"
+            aria-label={t.multipartThreshold}
+            wrapperClassName="w-24"
+            value={String(x.multipartThresholdMb)}
+            onChange={(e) => void update({ transfer: { multipartThresholdMb: Number(e.target.value) } })}
+            options={[8, 16, 32, 64].map((v) => ({ value: String(v), label: `${v} MB` }))}
+          />
+        </Row>
+        <Row label={t.defaultStorageClass}>
+          <NativeSelect
+            size="sm"
+            aria-label={t.defaultStorageClass}
+            wrapperClassName="w-52"
+            value={x.defaultStorageClass}
+            onChange={(e) =>
+              void update({ transfer: { defaultStorageClass: e.target.value as StorageClass } })
+            }
+            options={SELECTABLE_CLASSES.map((c) => ({ value: c, label: STORAGE_CLASSES[c].label }))}
+          />
+        </Row>
+        <SwitchRow
+          label={t.normalizeNfc}
+          checked={x.normalizeNfc}
+          onCheckedChange={(v) => void update({ transfer: { normalizeNfc: v } })}
         />
-      </Row>
-      <Row label={t.maxParts}>
-        <NativeSelect
-          size="sm"
-          aria-label={t.maxParts}
-          wrapperClassName="w-20"
-          value={String(x.maxPartsPerFile)}
-          onChange={(e) => void update({ transfer: { maxPartsPerFile: Number(e.target.value) } })}
-          options={range(1, 16)}
+        <SwitchRow
+          label={t.ignoreDsStore}
+          checked={ignoresDsStore}
+          onCheckedChange={(v) =>
+            void update({
+              transfer: {
+                ignore: v
+                  ? [...x.ignore.filter((i) => i !== '.DS_Store'), '.DS_Store']
+                  : x.ignore.filter((i) => i !== '.DS_Store'),
+              },
+            })
+          }
         />
-      </Row>
-      <Row label={t.multipartThreshold}>
-        <NativeSelect
-          size="sm"
-          aria-label={t.multipartThreshold}
-          wrapperClassName="w-24"
-          value={String(x.multipartThresholdMb)}
-          onChange={(e) => void update({ transfer: { multipartThresholdMb: Number(e.target.value) } })}
-          options={[8, 16, 32, 64].map((v) => ({ value: String(v), label: `${v} MB` }))}
+        <SwitchRow
+          label={t.notifyOnComplete}
+          checked={x.notifyOnComplete}
+          onCheckedChange={(v) => void update({ transfer: { notifyOnComplete: v } })}
         />
-      </Row>
-      <Row label={t.defaultStorageClass}>
-        <NativeSelect
-          size="sm"
-          aria-label={t.defaultStorageClass}
-          wrapperClassName="w-52"
-          value={x.defaultStorageClass}
-          onChange={(e) => void update({ transfer: { defaultStorageClass: e.target.value as StorageClass } })}
-          options={SELECTABLE_CLASSES.map((c) => ({ value: c, label: STORAGE_CLASSES[c].label }))}
-        />
-      </Row>
-      <SwitchRow
-        label={t.normalizeNfc}
-        checked={x.normalizeNfc}
-        onCheckedChange={(v) => void update({ transfer: { normalizeNfc: v } })}
-      />
-      <SwitchRow
-        label={t.ignoreDsStore}
-        checked={ignoresDsStore}
-        onCheckedChange={(v) =>
-          void update({
-            transfer: {
-              ignore: v
-                ? [...x.ignore.filter((i) => i !== '.DS_Store'), '.DS_Store']
-                : x.ignore.filter((i) => i !== '.DS_Store'),
-            },
-          })
-        }
-      />
-      <SwitchRow
-        label={t.notifyOnComplete}
-        checked={x.notifyOnComplete}
-        onCheckedChange={(v) => void update({ transfer: { notifyOnComplete: v } })}
-      />
-    </Section>
+      </Section>
+      {connections.length > 0 ? (
+        <Section title={t.connectionStorageClass}>
+          <p className="m-0 text-xs text-muted-foreground">{t.connectionStorageClassNote}</p>
+          {connections.map((c) => (
+            <ConnectionClassRow key={c.id} connection={c} fallback={x.defaultStorageClass} />
+          ))}
+        </Section>
+      ) : null}
+    </>
   );
 }
 
 function ConnectionsTab({ connections }: { connections: Connection[] }) {
   const open = useUiStore((s) => s.openDialog);
+  const patch = usePatchConnection();
+  const roles = connections.filter((c) => c.roleArn);
   return (
-    <Section>
-      <ul className="m-0 flex list-none flex-col rounded-lg p-0 shadow-[inset_0_0_0_0.5px_var(--border)]">
-        {connections.map((c) => (
-          <li key={c.id} className="flex items-center gap-2.5 px-3 py-2 not-last:hairline-b">
-            <Icon icon={Database} size={16} className="text-primary" />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-base font-medium">{c.bucket}</span>
-              <span className="truncate text-xs text-muted-foreground">
-                {c.regionShort} · {c.roleArn ? t.authRole : t.authStatic}（{c.accessKeyIdMasked}）
-              </span>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => open({ type: 'editConnection', connectionId: c.id })}
-            >
-              {t.edit}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-destructive"
-              onClick={() => open({ type: 'deleteConnection', connectionId: c.id })}
-            >
-              {t.remove}
-            </Button>
-          </li>
-        ))}
-      </ul>
-      <Button variant="outline" className="self-start" onClick={() => open({ type: 'addBucket' })}>
-        {t.addBucket}
-      </Button>
-    </Section>
+    <>
+      <Section>
+        <ul className="m-0 flex list-none flex-col rounded-lg p-0 shadow-[inset_0_0_0_0.5px_var(--border)]">
+          {connections.map((c) => (
+            <li key={c.id} className="flex items-center gap-2.5 px-3 py-2 not-last:hairline-b">
+              <Icon icon={Database} size={16} className="text-primary" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-base font-medium">{c.bucket}</span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {c.regionShort} · {c.roleArn ? t.authRole : t.authStatic}（{c.accessKeyIdMasked}）
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => open({ type: 'editConnection', connectionId: c.id })}
+              >
+                {t.edit}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive"
+                onClick={() => open({ type: 'deleteConnection', connectionId: c.id })}
+              >
+                {t.remove}
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <Button variant="outline" className="self-start" onClick={() => open({ type: 'addBucket' })}>
+          {t.addBucket}
+        </Button>
+      </Section>
+      {roles.length > 0 ? (
+        // AssumeRole の SourceIdentity（接続ごと、既定はオフ。04 §2.3）
+        <Section title={t.sourceIdentity}>
+          <p className="m-0 text-xs text-muted-foreground">{t.sourceIdentityNote}</p>
+          {roles.map((c) => (
+            <SwitchRow
+              key={c.id}
+              label={c.bucket}
+              checked={c.useSourceIdentity}
+              onCheckedChange={(v) =>
+                void patch(c.id, { useSourceIdentity: v }, 'SourceIdentity の設定を変更')
+              }
+            />
+          ))}
+        </Section>
+      ) : null}
+    </>
   );
 }
 
 function CostTagRow({ connection }: { connection: Connection }) {
-  const queryClient = useQueryClient();
+  const patch = usePatchConnection();
   const [key, setKey] = React.useState(connection.costTag?.key ?? '');
   const [value, setValue] = React.useState(connection.costTag?.value ?? '');
   const save = () => {
@@ -258,10 +339,7 @@ function CostTagRow({ connection }: { connection: Connection }) {
     const next = k && v ? { key: k, value: v } : null;
     const cur = connection.costTag;
     if ((next?.key ?? '') === (cur?.key ?? '') && (next?.value ?? '') === (cur?.value ?? '')) return;
-    ipc.connections
-      .patch(connection.id, { costTag: next })
-      .then(() => queryClient.invalidateQueries({ queryKey: qk.connections }))
-      .catch((e) => showError(e, 'コスト配分タグを変更'));
+    void patch(connection.id, { costTag: next }, 'コスト配分タグを変更');
   };
   return (
     <div className="grid grid-cols-[1fr_1fr_1fr] items-center gap-2">
@@ -485,7 +563,7 @@ export function SettingsWindow() {
       </header>
       <main className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto p-5">
         {tab === 'general' ? <GeneralTab /> : null}
-        {tab === 'transfer' ? <TransferTab /> : null}
+        {tab === 'transfer' ? <TransferTab connections={session ? list : []} /> : null}
         {needsSession && session === null ? (
           <p className="m-0 text-base text-muted-foreground">{t.signedOut}</p>
         ) : null}
