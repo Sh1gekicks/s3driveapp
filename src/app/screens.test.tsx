@@ -218,6 +218,70 @@ describe('インスペクタの 4 つの表示（03 §5.6）', () => {
   });
 });
 
+describe('サイドバーの幅（03 §3）', () => {
+  const handle = () => screen.findByRole('separator', { name: 'サイドバーの幅' });
+  const width = () =>
+    screen.getByRole('complementary', { name: 'サイドバー' }).style.getPropertyValue('--sidebar-w');
+  const saved = () =>
+    backend.calls
+      .filter((c) => c.cmd === 'settings_update')
+      .map((c) => (c.args.patch as { view?: { sidebarWidth?: number } }).view?.sidebarWidth);
+
+  it('右端のつまみをドラッグして幅を変え、離したときに保存する（180〜360px に収める）', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const h = await handle();
+    expect(h).toHaveAttribute('aria-valuenow', '220');
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: h, coords: { clientX: 220 } },
+      { coords: { clientX: 300 } },
+    ]);
+    expect(width()).toBe('300px');
+    expect(h).toHaveAttribute('aria-valuenow', '300');
+    // ドラッグ中は保存しない
+    expect(saved()).toEqual([]);
+    await user.pointer([{ coords: { clientX: 900 } }, { keys: '[/MouseLeft]' }]);
+    expect(width()).toBe('360px');
+    expect(saved()).toEqual([360]);
+  });
+
+  it('←→ で 10px ずつ変え、キーを離したときに保存する。ダブルクリックで既定の幅に戻す', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const h = await handle();
+    h.focus();
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
+    expect(width()).toBe('200px');
+    expect(saved()).toEqual([210, 200]);
+    // 押し続けている間は保存しない
+    await user.keyboard('{ArrowRight>3}');
+    expect(width()).toBe('230px');
+    expect(saved()).toEqual([210, 200]);
+    await user.keyboard('{/ArrowRight}');
+    expect(saved()).toEqual([210, 200, 230]);
+    await user.keyboard('{Home}');
+    expect(h).toHaveAttribute('aria-valuenow', '180');
+    // 最小の幅でさらに狭めても保存し直さない
+    await user.keyboard('{ArrowLeft}');
+    expect(saved()).toEqual([210, 200, 230, 180]);
+    await user.dblClick(h);
+    expect(width()).toBe('220px');
+    expect(saved()).toEqual([210, 200, 230, 180, 220]);
+  });
+
+  it('保存した幅で起動し、広げた分だけ狭い表示に切り替える（01 §5.5）', async () => {
+    // 1,200 px のウィンドウでも、サイドバーが 360px ならコンテンツは既定の 1,060 px 相当
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    renderApp((b) => {
+      b.settings.view.sidebarWidth = 360;
+    });
+    await within(await list()).findByText('logo.png');
+    expect(await handle()).toHaveAttribute('aria-valuenow', '360');
+    expect(width()).toBe('360px');
+    expect(screen.queryByRole('complementary', { name: 'インスペクタ' })).not.toBeInTheDocument();
+  });
+});
+
 describe('トーストの種類（03 §11）', () => {
   const toastWith = findToast;
 

@@ -1,4 +1,4 @@
-// UI だけの状態（01 §5.4）: 画面、表示モード、並べ替え、選択、インスペクタ、検索語とフィルタ、ダイアログ。
+// UI だけの状態（01 §5.4）: 画面、表示モード、並べ替え、選択、インスペクタ、サイドバーの幅、検索語とフィルタ、ダイアログ。
 
 import { create } from 'zustand';
 import type {
@@ -60,6 +60,15 @@ export function nextSearchOffset(pages: SearchResult[]): number | undefined {
   return files < first.total - folders ? files : undefined;
 }
 
+/** サイドバーの幅（px）の既定値と範囲（03 §3）。Rust 側の `ViewSettings::clamped` と合わせる。 */
+export const SIDEBAR_WIDTH = { default: 220, min: 180, max: 360 } as const;
+
+/** サイドバーの幅を範囲に収め、整数にする。 */
+export function clampSidebarWidth(width: number): number {
+  if (!Number.isFinite(width)) return SIDEBAR_WIDTH.default;
+  return Math.round(Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, width)));
+}
+
 /** ダイアログの種類とペイロード。 */
 export type DialogState =
   | { type: 'newFolder' }
@@ -104,6 +113,7 @@ export interface UiState {
   selection: Selection;
   inspectorVisible: boolean;
   inspectorTab: 'details' | 'versions';
+  sidebarWidth: number;
   query: string;
   filters: Filters;
   filtersOpen: boolean;
@@ -115,6 +125,8 @@ export interface UiState {
   setSort: (sort: Sort) => void;
   setInspectorVisible: (visible: boolean) => void;
   setInspectorTab: (tab: 'details' | 'versions') => void;
+  /** 範囲外の値は範囲に収める。 */
+  setSidebarWidth: (width: number) => void;
   setQuery: (query: string) => void;
   setFilters: (filters: Filters) => void;
   clearSearch: () => void;
@@ -137,6 +149,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   selection: { keys: [], anchor: null },
   inspectorVisible: true,
   inspectorTab: 'details',
+  sidebarWidth: SIDEBAR_WIDTH.default,
   query: '',
   filters: NO_FILTERS,
   filtersOpen: false,
@@ -149,6 +162,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSort: (sort) => set({ sort }),
   setInspectorVisible: (inspectorVisible) => set({ inspectorVisible }),
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
+  setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
   setQuery: (query) => set({ query, selection: { keys: [], anchor: null } }),
   setFilters: (filters) => set({ filters, selection: { keys: [], anchor: null } }),
   clearSearch: () => set({ query: '', filters: NO_FILTERS, selection: { keys: [], anchor: null } }),

@@ -5,7 +5,7 @@ import { AppShell } from '@/components/ds/app-shell';
 import { Spinner } from '@/components/ui/misc';
 import { toast } from '@/components/ui/toaster';
 import { Browser } from '@/features/browser/browser';
-import { Sidebar } from '@/features/browser/sidebar';
+import { Sidebar, SidebarResizer } from '@/features/browser/sidebar';
 import { BrowserToolbar } from '@/features/browser/toolbar';
 import { checkForUpdate, useCommands } from '@/features/commands';
 import { Dashboard, DashboardToolbar } from '@/features/dashboard/dashboard';
@@ -42,6 +42,7 @@ function useRestoreOnce(connections: Connection[] | undefined) {
     ui.setViewMode(view.mode);
     ui.setSort(view.sort);
     ui.setInspectorVisible(view.inspector);
+    ui.setSidebarWidth(view.sidebarWidth);
     applyAppearance(settings.data.general.appearance);
     if (settings.data.advanced.autoCheckUpdate) void checkForUpdate(true);
   }, [settings.data]);
@@ -100,7 +101,8 @@ export function App() {
   const connectionId = useNavStore((s) => s.connectionId);
   const inspectorVisible = useUiStore((s) => s.inspectorVisible);
   const hasSelection = useUiStore((s) => s.selection.keys.length > 0);
-  const layout = layoutFor(useWindowWidth());
+  const sidebarWidth = useUiStore((s) => s.sidebarWidth);
+  const layout = layoutFor(useWindowWidth(), sidebarWidth);
 
   const list = connections.data;
   const needsSignIn = !session.isPending && (!signedIn || (list !== undefined && list.length === 0));
@@ -151,6 +153,8 @@ export function App() {
     <>
       <AppShell
         sidebar={<Sidebar connections={list} session={session.data as NonNullable<typeof session.data>} />}
+        sidebarWidth={sidebarWidth}
+        sidebarResizer={<SidebarResizer />}
         toolbar={
           dashboard ? (
             <DashboardToolbar connections={list} connection={connection} />

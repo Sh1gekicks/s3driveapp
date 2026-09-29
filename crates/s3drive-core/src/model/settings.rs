@@ -60,6 +60,8 @@ pub struct ViewSettings {
     pub mode: ViewMode,
     pub sort: Sort,
     pub inspector: bool,
+    /// サイドバーの幅（px）。
+    pub sidebar_width: u32,
 }
 
 impl Default for ViewSettings {
@@ -68,7 +70,17 @@ impl Default for ViewSettings {
             mode: ViewMode::List,
             sort: Sort::default(),
             inspector: true,
+            sidebar_width: 220,
         }
+    }
+}
+
+impl ViewSettings {
+    /// 範囲外の値を設計上の範囲に収める（03 §3）。
+    pub fn clamped(&self) -> Self {
+        let mut s = self.clone();
+        s.sidebar_width = s.sidebar_width.clamp(180, 360);
+        s
     }
 }
 
@@ -296,6 +308,8 @@ mod tests {
         let file: SettingsFile = serde_json::from_str(json).unwrap();
         assert_eq!(file.settings.general.appearance, Appearance::Dark);
         assert_eq!(file.settings.view.mode, ViewMode::Grid);
+        // サイドバーの幅がない（0.2.0 以前の）ファイルは既定の幅にする
+        assert_eq!(file.settings.view.sidebar_width, 220);
         assert_eq!(file.settings.transfer.max_files, 3);
         let account = &file.accounts["123"];
         assert_eq!(account.connections[0].bucket, "b");
@@ -315,5 +329,20 @@ mod tests {
             (s.max_files, s.max_parts_per_file, s.multipart_threshold_mb),
             (8, 1, 8)
         );
+    }
+
+    #[test]
+    fn view_settings_are_clamped() {
+        let narrow = ViewSettings {
+            sidebar_width: 0,
+            ..ViewSettings::default()
+        };
+        let wide = ViewSettings {
+            sidebar_width: 999,
+            ..ViewSettings::default()
+        };
+        assert_eq!(narrow.clamped().sidebar_width, 180);
+        assert_eq!(wide.clamped().sidebar_width, 360);
+        assert_eq!(ViewSettings::default().clamped().sidebar_width, 220);
     }
 }

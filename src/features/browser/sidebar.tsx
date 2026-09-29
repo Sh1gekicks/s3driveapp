@@ -4,18 +4,21 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ChartPie, ChevronsUpDown, Database, KeyRound, LogOut, Plus, Settings } from 'lucide-react';
 import { useStorageMetrics } from '@/app/queries';
 import { qk } from '@/app/query-keys';
+import { SIDEBAR_ID } from '@/components/ds/app-shell';
 import { Icon } from '@/components/ds/icon';
+import { ResizeHandle } from '@/components/ds/resize-handle';
 import { SidebarItem, SidebarSection } from '@/components/ds/sidebar-item';
 import { UsageBar } from '@/components/ds/usage-bar';
 import { ContextMenu, DropdownMenu, type MenuEntry } from '@/components/ui/menu';
 import { Skeleton } from '@/components/ui/misc';
+import { persistView } from '@/features/actions';
 import { showError } from '@/features/errors';
 import { formatSize } from '@/lib/format';
 import { ja } from '@/lib/i18n/ja';
 import type { Connection, UserSession } from '@/lib/ipc';
 import * as ipc from '@/lib/ipc';
 import { useNavStore } from '@/stores/nav';
-import { useUiStore } from '@/stores/ui';
+import { SIDEBAR_WIDTH, useUiStore } from '@/stores/ui';
 
 const t = ja.sidebar;
 
@@ -90,6 +93,24 @@ function AccountButton({ session }: { session: UserSession }) {
           <Icon icon={ChevronsUpDown} size={12} className="text-muted-foreground" />
         </button>
       }
+    />
+  );
+}
+
+/** サイドバーの右端の幅変更のつまみ（03 §3）。幅は表示の設定として保存する。 */
+export function SidebarResizer() {
+  const width = useUiStore((s) => s.sidebarWidth);
+  return (
+    <ResizeHandle
+      label={t.resize}
+      controls={SIDEBAR_ID}
+      value={width}
+      min={SIDEBAR_WIDTH.min}
+      max={SIDEBAR_WIDTH.max}
+      defaultValue={SIDEBAR_WIDTH.default}
+      onChange={(w) => useUiStore.getState().setSidebarWidth(w)}
+      onCommit={persistView}
+      className="-right-1"
     />
   );
 }

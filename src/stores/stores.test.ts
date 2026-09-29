@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SearchEntry, SearchResult } from '@/lib/ipc';
 import { parentPrefix, useNavStore } from './nav';
-import { filterCount, NO_FILTERS, nextSearchOffset, toSearchQuery, useUiStore } from './ui';
+import {
+  clampSidebarWidth,
+  filterCount,
+  NO_FILTERS,
+  nextSearchOffset,
+  SIDEBAR_WIDTH,
+  toSearchQuery,
+  useUiStore,
+} from './ui';
 
 describe('useNavStore（戻る／進む）', () => {
   beforeEach(() => useNavStore.getState().openConnection('c1'));
@@ -41,6 +49,18 @@ describe('useNavStore（戻る／進む）', () => {
     useNavStore.getState().navigate('x/');
     useNavStore.getState().openConnection('c2', 'y/');
     expect(useNavStore.getState()).toMatchObject({ connectionId: 'c2', prefix: 'y/', back: [], forward: [] });
+  });
+});
+
+describe('サイドバーの幅', () => {
+  it('180〜360px の整数に収める', () => {
+    expect(clampSidebarWidth(100)).toBe(180);
+    expect(clampSidebarWidth(1000)).toBe(360);
+    expect(clampSidebarWidth(250.6)).toBe(251);
+    expect(clampSidebarWidth(Number.NaN)).toBe(SIDEBAR_WIDTH.default);
+    useUiStore.getState().setSidebarWidth(9999);
+    expect(useUiStore.getState().sidebarWidth).toBe(360);
+    useUiStore.getState().setSidebarWidth(SIDEBAR_WIDTH.default);
   });
 });
 

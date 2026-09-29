@@ -77,6 +77,7 @@ export const ja = {
     editConnection: '接続を編集…',
     updateCredentials: '認証情報を更新…',
     deleteConnection: '接続を削除…',
+    resize: 'サイドバーの幅',
   },
   toolbar: {
     back: '戻る',

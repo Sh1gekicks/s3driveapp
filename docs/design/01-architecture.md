@@ -223,11 +223,11 @@ flowchart LR
 
 | ストア | 主な状態 |
 |---|---|
-| `useUiStore` | `view`、`viewMode`（`list`／`grid`）、`sort`（キーと向き）、`selection`（選択キーと起点）、`inspector`（表示／タブ）、`query`、`filters`（種類・拡張子・サイズ・期間・クラス）、`filtersOpen`、`dialog`（種類とペイロード）、`contextMenu` |
+| `useUiStore` | `view`、`viewMode`（`list`／`grid`）、`sort`（キーと向き）、`selection`（選択キーと起点）、`inspector`（表示／タブ）、`sidebarWidth`、`query`、`filters`（種類・拡張子・サイズ・期間・クラス）、`filtersOpen`、`dialog`（種類とペイロード）、`contextMenu` |
 | `useNavStore` | `connectionId`、`prefix`、`back[]`、`forward[]` |
 | `useTransferStore` | 転送ジョブの一覧と進捗（転送チャネルのイベントで更新） |
 
-`viewMode`、`sort`、インスペクタの表示有無は設定として保存し、次回起動時に復元する。
+`viewMode`、`sort`、インスペクタの表示有無、サイドバーの幅は設定として保存し、次回起動時に復元する。
 
 ### 5.5 ウィンドウ幅による振る舞い
 
@@ -238,6 +238,8 @@ DS の UI キットに合わせ、メインウィンドウのコンテンツ幅�
 | 1,100 px 以上 | 標準。インスペクタを常時表示できる。リストは「名前・更新日・サイズ・種類・ストレージクラス」の 5 列 |
 | 900〜1,099 px | リストから「種類」列を省く。インスペクタは項目を選択しているときだけ表示する。ツールバーの「アップロード」はアイコンボタンになる |
 | 900 px 未満 | インスペクタはコンテンツ右側に重ねて表示する（幅は 300 px または 85% の小さい方） |
+
+境界はサイドバーが既定の幅（220 px）のときの値とする。サイドバーの幅を変えた場合は、その差の分だけ境界をずらす（例: サイドバーが 300 px なら、標準は 1,180 px 以上）。
 
 ## 6. バックエンド設計（概要）
 

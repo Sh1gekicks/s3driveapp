@@ -2,4 +2,8 @@
 import type { Sort } from "./Sort";
 import type { ViewMode } from "./ViewMode";
 
-export type ViewSettings = { mode: ViewMode, sort: Sort, inspector: boolean, };
+export type ViewSettings = { mode: ViewMode, sort: Sort, inspector: boolean, 
+/**
+ * サイドバーの幅（px）。
+ */
+sidebarWidth: number, };

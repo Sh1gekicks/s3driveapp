@@ -1,11 +1,19 @@
 import type * as React from 'react';
 import { cn } from '@/lib/utils';
 
-// DS: components/shell/AppWindow.jsx（03 §3）。サイドバー 220、ツールバー 52（タイトルバーを兼ねる）、インスペクタ 280。
+// DS: components/shell/AppWindow.jsx（03 §3）。サイドバー 220（既定。右端のつまみで変えられる）、
+// ツールバー 52（タイトルバーを兼ねる）、インスペクタ 280。
 // 信号機ボタンは OS が描画するため、DS の TrafficLights モックは使わない（02 §6）。
+
+/** サイドバーの要素の id（幅変更のつまみの `aria-controls` に使う）。 */
+export const SIDEBAR_ID = 'app-sidebar';
 
 export interface AppShellProps {
   sidebar: React.ReactNode;
+  /** サイドバーの幅（px）。省略時は `--sidebar-w`。 */
+  sidebarWidth?: number;
+  /** サイドバーの右端に重ねる幅変更のつまみ（`ResizeHandle`）。 */
+  sidebarResizer?: React.ReactNode;
   toolbar: React.ReactNode;
   inspector?: React.ReactNode;
   /** 幅が狭いときにインスペクタをコンテンツの右側に重ねて表示する（01 §5.5）。 */
@@ -13,16 +21,29 @@ export interface AppShellProps {
   children: React.ReactNode;
 }
 
-export function AppShell({ sidebar, toolbar, inspector, overlayInspector, children }: AppShellProps) {
+export function AppShell({
+  sidebar,
+  sidebarWidth,
+  sidebarResizer,
+  toolbar,
+  inspector,
+  overlayInspector,
+  children,
+}: Readonly<AppShellProps>) {
   return (
     <div className="flex h-full overflow-hidden text-foreground">
       <aside
+        id={SIDEBAR_ID}
         aria-label="サイドバー"
-        className="flex w-(--sidebar-w) shrink-0 flex-col bg-sidebar pt-(--titlebar-h) hairline-r"
-        style={{ borderRightColor: 'var(--sidebar-border)' }}
+        className="relative flex w-(--sidebar-w) shrink-0 flex-col bg-sidebar pt-(--titlebar-h) hairline-r"
+        style={{
+          borderRightColor: 'var(--sidebar-border)',
+          ...(sidebarWidth === undefined ? null : { '--sidebar-w': `${sidebarWidth}px` }),
+        }}
         data-tauri-drag-region
       >
         {sidebar}
+        {sidebarResizer}
       </aside>
       <main className="flex min-w-0 flex-1 flex-col bg-background">
         <Toolbar>{toolbar}</Toolbar>
