@@ -1,6 +1,8 @@
 //! マルチパート転送の計算（04 §4.2、04 §5.2）。
 
 pub const MIB: u64 = 1024 * 1024;
+/// 設定・画面の MB（10 進。02 §9.2）。
+pub const MB: u64 = 1_000_000;
 /// パートサイズの基本値。
 pub const DEFAULT_PART_SIZE: u64 = 8 * MIB;
 /// S3 のパート数の上限。
@@ -8,7 +10,7 @@ pub const MAX_PARTS: u64 = 10_000;
 /// S3 のパートサイズの上限（5 GiB）。
 pub const MAX_PART_SIZE: u64 = 5 * 1024 * MIB;
 /// これ以上のファイルは範囲指定の GetObject を並列に行う（64 MB）。
-pub const RANGED_DOWNLOAD_THRESHOLD: u64 = 64 * 1_000_000;
+pub const RANGED_DOWNLOAD_THRESHOLD: u64 = 64 * MB;
 /// 範囲指定のダウンロードの大きさ。
 pub const DOWNLOAD_RANGE_SIZE: u64 = 16 * MIB;
 /// これ以下のパートはメモリに読み込んで送り、送信バイト数を細かく数える。
@@ -22,6 +24,11 @@ pub fn part_size(file_size: u64) -> u64 {
     }
     let raw = file_size.div_ceil(MAX_PARTS);
     (raw.div_ceil(MIB) * MIB).min(MAX_PART_SIZE)
+}
+
+/// マルチパートでアップロードするか（04 §4.2）。設定の境界（MB）以上のファイルをマルチパートにする。
+pub fn uses_multipart(file_size: u64, threshold_mb: u32) -> bool {
+    file_size >= threshold_mb as u64 * MB
 }
 
 /// パートの範囲（開始位置、長さ）。
@@ -68,6 +75,15 @@ mod tests {
         let p = part_size(size);
         assert!(p <= MAX_PART_SIZE);
         assert!(size.div_ceil(p) <= MAX_PARTS);
+    }
+
+    #[test]
+    fn multipart_threshold_is_in_decimal_megabytes() {
+        // 設定の 16 MB は 16,000,000 バイト（画面の表記と同じ 10 進）
+        assert!(!uses_multipart(16 * 1_000_000 - 1, 16));
+        assert!(uses_multipart(16 * 1_000_000, 16));
+        assert!(!uses_multipart(7_999_999, 8));
+        assert!(uses_multipart(64 * 1_000_000, 64));
     }
 
     #[test]

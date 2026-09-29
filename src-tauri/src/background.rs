@@ -98,6 +98,14 @@ async fn check_restores(app: &AppHandle) {
 }
 
 async fn check_update(app: &AppHandle) {
+    // インストール済みで、転送の完了後の再起動を待っている（08 §7）
+    if app
+        .state::<AppState>()
+        .restart_pending
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return;
+    }
     let Ok(updater) = app.updater() else { return };
     match updater.check().await {
         Ok(Some(update)) => emit_all(

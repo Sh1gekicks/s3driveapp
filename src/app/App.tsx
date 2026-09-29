@@ -7,7 +7,7 @@ import { toast } from '@/components/ui/toaster';
 import { Browser } from '@/features/browser/browser';
 import { Sidebar, SidebarResizer } from '@/features/browser/sidebar';
 import { BrowserToolbar } from '@/features/browser/toolbar';
-import { checkForUpdate, useCommands } from '@/features/commands';
+import { useCommands } from '@/features/commands';
 import { Dashboard, DashboardToolbar } from '@/features/dashboard/dashboard';
 import { DialogHost } from '@/features/dialogs/dialog-host';
 import { Inspector } from '@/features/inspector/inspector';
@@ -44,7 +44,7 @@ function useRestoreOnce(connections: Connection[] | undefined) {
     ui.setInspectorVisible(view.inspector);
     ui.setSidebarWidth(view.sidebarWidth);
     applyAppearance(settings.data.general.appearance);
-    if (settings.data.advanced.autoCheckUpdate) void checkForUpdate(true);
+    // アップデートの自動確認（起動時と 24 時間ごと）は Rust 側が行い、update://available で知らせる（08 §7）
   }, [settings.data]);
 
   useEffect(() => {

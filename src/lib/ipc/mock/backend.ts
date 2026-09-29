@@ -10,6 +10,7 @@ import type {
   BatchResult,
   Connection,
   ConnectionInput,
+  ConnectionPatch,
   CostSummary,
   Decisions,
   Entry,
@@ -113,6 +114,8 @@ export class MockBackend {
   lastLocation: { connectionId: string; prefix: string } | null = null;
   tick: number;
   calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  /** 接続ごとの設定（`connection_patch`）。 */
+  connectionPatches = new Map<string, ConnectionPatch>();
   /** 次の呼び出しで失敗させるコマンド（画面の失敗表示のテスト用）。 */
   failures = new Map<string, AppError>();
   /** 検索インデックスを作成した接続（CloudWatch の容量がないときの集計元。04 §12.2）。 */
@@ -145,7 +148,7 @@ export class MockBackend {
 
   private connection(b: MockBucket): Connection {
     const [label, short] = REGION_NAMES[b.region] ?? [b.region, b.region];
-    return {
+    const connection: Connection = {
       id: b.id,
       bucket: b.name,
       region: b.region,
@@ -159,6 +162,7 @@ export class MockBackend {
       costTag: null,
       defaultStorageClass: null,
     };
+    return { ...connection, ...this.connectionPatches.get(b.id) };
   }
 
   private current(o: MockObject) {
@@ -427,8 +431,12 @@ export class MockBackend {
       }
       case 'connection_patch': {
         const b = this.bucket(a.id);
+        this.connectionPatches.set(b.id, {
+          ...this.connectionPatches.get(b.id),
+          ...(a.patch as ConnectionPatch),
+        });
         void emit('connections://changed', null);
-        return { ...this.connection(b), ...(a.patch as object) };
+        return this.connection(b);
       }
       case 'connection_delete':
         this.buckets = this.buckets.filter((b) => b.id !== a.id);

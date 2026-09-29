@@ -236,8 +236,9 @@ export const app = {
   openLogs: () => call<void>('app_open_logs'),
   clearCache: () => call<void>('app_clear_cache'),
   checkUpdate: () => call<UpdateInfo | null>('app_check_update'),
-  installUpdate: (onEvent: (e: UpdateEvent) => void) =>
-    call<void>('app_install_update', { onEvent: channel(onEvent) }),
+  /** 転送中の場合、`whenIdle` なら転送の完了後に、そうでなければ転送を中止して再起動する（08 §7）。 */
+  installUpdate: (onEvent: (e: UpdateEvent) => void, whenIdle = false) =>
+    call<void>('app_install_update', { onEvent: channel(onEvent), whenIdle }),
   notify: (title: string, body: string) => call<void>('app_notify', { title, body }),
 };
 

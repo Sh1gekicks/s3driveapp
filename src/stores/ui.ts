@@ -96,6 +96,7 @@ export type DialogState =
   | { type: 'deleteConnection'; connectionId: string }
   | { type: 'credentials'; credentialId?: string }
   | { type: 'update'; version: string; notes: string | null }
+  | { type: 'signOut' }
   | { type: 'details'; title: string; lines: string[] };
 
 export type ConflictResolver = (result: Record<string, 'replace' | 'skip' | 'keepBoth'> | null) => void;

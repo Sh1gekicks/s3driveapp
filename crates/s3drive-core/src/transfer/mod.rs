@@ -256,6 +256,14 @@ impl TransferManager {
         }
     }
 
+    /// 転送中のジョブがなくなるまで待つ（転送の完了後にアップデートを適用して再起動する。08 §7）。
+    /// 待つ間に登録された転送も待つ。
+    pub async fn wait_idle(&self) {
+        while self.summary().0 > 0 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     pub(crate) fn store_plan(&self, plan_id: String, plan: UploadPlanData) {
         let mut plans = self.shared.plans.lock().unwrap();
         plans.retain(|_, (t, _)| t.elapsed() < PLAN_TTL);
@@ -596,6 +604,50 @@ mod tests {
         // 送らなかったファイルも再試行の対象にする
         let (_, retry) = manager.retry_files(&id).unwrap();
         assert_eq!(retry.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn waits_until_transfers_finish() {
+        let put = mock!(aws_sdk_s3::Client::put_object).then_output(|| {
+            aws_sdk_s3::operation::put_object::PutObjectOutput::builder()
+                .e_tag("\"e\"")
+                .build()
+        });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&put]);
+        let ctx = Arc::new(ConnCtx::for_tests("k1", "b", s3));
+        let dir = crate::store::db::tempfile_guard::TempDir::new().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, b"data").unwrap();
+        let file = FileWork::Upload(UploadFile {
+            mtime: std::fs::metadata(&path).unwrap().modified().ok(),
+            path,
+            key: "up/a.txt".into(),
+            size: 4,
+            storage_class: crate::model::StorageClass::Standard,
+            replaces: false,
+            is_marker: false,
+        });
+        let (db, _db_dir) = Db::open_temp().unwrap();
+        let manager = TransferManager::new(db);
+        // 転送がなければすぐに戻る
+        manager.wait_idle().await;
+        let id = manager.enqueue(
+            ctx,
+            TransferKind::Upload,
+            "1 件をアップロード中".into(),
+            "b/up/".into(),
+            TransferSettings::default(),
+            vec![file],
+        );
+        assert_eq!(manager.summary().0, 1);
+        tokio::time::timeout(Duration::from_secs(10), manager.wait_idle())
+            .await
+            .expect("wait_idle");
+        assert_eq!(manager.summary().0, 0);
+        assert_eq!(
+            manager.job_snapshot(&id).unwrap().status,
+            JobStatus::Succeeded
+        );
     }
 
     #[tokio::test(start_paused = true)]

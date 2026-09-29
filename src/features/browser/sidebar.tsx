@@ -1,9 +1,7 @@
 // サイドバー（03 §5.1）。DS: ui_kits/s3-drive/Sidebar.jsx。
 
-import { useQueryClient } from '@tanstack/react-query';
 import { ChartPie, ChevronsUpDown, Database, KeyRound, LogOut, Plus, Settings } from 'lucide-react';
 import { useStorageMetrics } from '@/app/queries';
-import { qk } from '@/app/query-keys';
 import { SIDEBAR_ID } from '@/components/ds/app-shell';
 import { Icon } from '@/components/ds/icon';
 import { ResizeHandle } from '@/components/ds/resize-handle';
@@ -11,8 +9,7 @@ import { SidebarItem, SidebarSection } from '@/components/ds/sidebar-item';
 import { UsageBar } from '@/components/ds/usage-bar';
 import { ContextMenu, DropdownMenu, type MenuEntry } from '@/components/ui/menu';
 import { Skeleton } from '@/components/ui/misc';
-import { persistView } from '@/features/actions';
-import { showError } from '@/features/errors';
+import { persistView, signOut } from '@/features/actions';
 import { formatSize } from '@/lib/format';
 import { ja } from '@/lib/i18n/ja';
 import type { Connection, UserSession } from '@/lib/ipc';
@@ -52,30 +49,21 @@ function UsageMeter({ connection }: { connection: Connection }) {
 }
 
 function AccountButton({ session }: { session: UserSession }) {
-  const queryClient = useQueryClient();
   const items: MenuEntry[] = [
     { id: 'settings', label: ja.menu.settings, icon: Settings, shortcut: '⌘,' },
     { id: 'credentials', label: ja.menu.credentials, icon: KeyRound },
     { separator: true, id: 's1' },
     { id: 'signOut', label: ja.menu.signOut, icon: LogOut },
   ];
-  const onSelect = async (id: string) => {
+  const onSelect = (id: string) => {
     if (id === 'settings') void ipc.app.openSettings();
     if (id === 'credentials') useUiStore.getState().openDialog({ type: 'credentials' });
-    if (id === 'signOut') {
-      try {
-        await ipc.auth.signOut();
-        queryClient.setQueryData(qk.session, null);
-        useNavStore.getState().reset();
-      } catch (e) {
-        showError(e, ja.verbs.signOut);
-      }
-    }
+    if (id === 'signOut') void signOut();
   };
   return (
     <DropdownMenu
       items={items}
-      onSelect={(id) => void onSelect(id)}
+      onSelect={onSelect}
       side="top"
       align="start"
       trigger={

@@ -60,12 +60,48 @@ describe('SCR-04 設定', () => {
     );
   });
 
+  it('転送: アップロード時のストレージクラスを接続ごとに変える（04 §4.3）', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderSettings();
+    await tab(user, '転送');
+    const select = await screen.findByLabelText('acme-media-tokyo アップロード時のストレージクラス');
+    // 未設定の接続は全体の設定に従う
+    expect(select).toHaveValue('');
+    expect(within(select).getByRole('option', { name: '既定（Standard）' })).toBeInTheDocument();
+    await user.selectOptions(select, 'STANDARD_IA');
+    await waitFor(() =>
+      expect(backend.connectionPatches.get('conn-tokyo')).toEqual({ defaultStorageClass: 'STANDARD_IA' }),
+    );
+    await waitFor(() => expect(select).toHaveValue('STANDARD_IA'));
+    // 「既定」に戻すと未設定（null）にする
+    await user.selectOptions(select, '');
+    await waitFor(() =>
+      expect(backend.connectionPatches.get('conn-tokyo')).toEqual({ defaultStorageClass: null }),
+    );
+  });
+
+  it('接続: AssumeRole の接続だけ SourceIdentity を切り替えられる（04 §2.3）', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderSettings();
+    await tab(user, '接続');
+    const toggle = await screen.findByRole('switch', { name: 'acme-media-tokyo' });
+    // ロール ARN のない接続には出さない
+    expect(screen.queryByRole('switch', { name: 'acme-backup-osaka' })).toBeNull();
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await waitFor(() =>
+      expect(backend.connectionPatches.get('conn-tokyo')).toEqual({ useSourceIdentity: true }),
+    );
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
   it('接続: 一覧と編集・削除', async () => {
     const user = userEvent.setup();
     const { backend } = renderSettings();
     await tab(user, '接続');
-    expect(await screen.findByText('acme-media-tokyo')).toBeInTheDocument();
-    expect(screen.getByText('acme-backup-osaka')).toBeInTheDocument();
+    const list = await screen.findByRole('list');
+    expect(within(list).getByText('acme-media-tokyo')).toBeInTheDocument();
+    expect(within(list).getByText('acme-backup-osaka')).toBeInTheDocument();
     const [remove] = screen.getAllByRole('button', { name: '削除…' });
     await user.click(remove as HTMLElement);
     const dialog = await screen.findByRole('alertdialog');

@@ -26,13 +26,14 @@ import {
 import { isArchived, selectedEntries, visibleOrder } from './context';
 import { showError } from './errors';
 
-export async function checkForUpdate(silent = false) {
+/** 「アップデートを確認…」（自動の確認は Rust 側が行う。08 §7）。 */
+export async function checkForUpdate() {
   try {
     const info = await ipc.app.checkUpdate();
     if (info) useUiStore.getState().openDialog({ type: 'update', version: info.version, notes: info.notes });
-    else if (!silent) toast.show({ icon: Info, title: ja.dialog.update.none });
+    else toast.show({ icon: Info, title: ja.dialog.update.none });
   } catch (e) {
-    if (!silent) showError(e, 'アップデートを確認');
+    showError(e, 'アップデートを確認');
   }
 }
 

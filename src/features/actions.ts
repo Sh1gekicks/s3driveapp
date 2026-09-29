@@ -25,6 +25,7 @@ import { requireMock } from '@/lib/ipc/mock-loader';
 import { isNative } from '@/lib/platform';
 import { classLabel } from '@/lib/storage-class';
 import { parentPrefix, useNavStore } from '@/stores/nav';
+import { activeTransferCount } from '@/stores/transfers';
 import { filterCount, useUiStore } from '@/stores/ui';
 import { runBatch } from './batch';
 import { isArchived, selectedEntries } from './context';
@@ -559,6 +560,26 @@ export function goUp() {
   const from = nav.prefix;
   nav.navigate(parentPrefix(from));
   useUiStore.getState().setSelection([from]);
+}
+
+// ---- アカウント -----------------------------------------------------------------------------
+
+/**
+ * サインアウト（04 §1.4）。転送中のジョブがあれば確認し（`confirmed` が偽の場合）、サインアウトすると
+ * 転送をキャンセルする（キャンセルは Rust 側がまとめて行う）。
+ */
+export async function signOut(confirmed = false) {
+  if (!confirmed && activeTransferCount() > 0) {
+    useUiStore.getState().openDialog({ type: 'signOut' });
+    return;
+  }
+  try {
+    await ipc.auth.signOut();
+    queryClient.setQueryData(qk.session, null);
+    useNavStore.getState().reset();
+  } catch (e) {
+    showError(e, ja.verbs.signOut);
+  }
 }
 
 export { baseName };
