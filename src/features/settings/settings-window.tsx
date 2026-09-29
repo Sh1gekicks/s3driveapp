@@ -155,7 +155,10 @@ function GeneralTab() {
 }
 
 /** 接続ごとのアップロード時のストレージクラス（未設定なら全体の設定に従う。04 §4.3）。 */
-function ConnectionClassRow({ connection, fallback }: { connection: Connection; fallback: StorageClass }) {
+function ConnectionClassRow({
+  connection,
+  fallback,
+}: Readonly<{ connection: Connection; fallback: StorageClass }>) {
   const patch = usePatchConnection();
   return (
     <Row label={connection.bucket}>
@@ -180,7 +183,7 @@ function ConnectionClassRow({ connection, fallback }: { connection: Connection; 
   );
 }
 
-function TransferTab({ connections }: { connections: Connection[] }) {
+function TransferTab({ connections }: Readonly<{ connections: Connection[] }>) {
   const settings = useSettings().data;
   const update = useUpdateSettings();
   if (!settings) return <Skeleton className="h-40" />;

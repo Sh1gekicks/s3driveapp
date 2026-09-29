@@ -112,6 +112,19 @@ function UpdateDialog({
       </Button>
     </>
   );
+  let body: React.ReactNode = null;
+  if (confirming) {
+    body = (
+      <div role="alert" className="flex flex-col gap-1 text-sm">
+        <p className="m-0">{u.transfersActive(active)}</p>
+        <p className="m-0 text-muted-foreground">{u.transfersHint}</p>
+      </div>
+    );
+  } else if (notes) {
+    body = (
+      <p className="m-0 max-h-40 overflow-auto text-sm whitespace-pre-wrap text-muted-foreground">{notes}</p>
+    );
+  }
   return (
     <Dialog
       open
@@ -121,23 +134,14 @@ function UpdateDialog({
       title={u.title(version)}
       footer={footer}
     >
-      {confirming ? (
-        <div role="alert" className="flex flex-col gap-1 text-sm">
-          <p className="m-0">{u.transfersActive(active)}</p>
-          <p className="m-0 text-muted-foreground">{u.transfersHint}</p>
-        </div>
-      ) : notes ? (
-        <p className="m-0 max-h-40 overflow-auto text-sm whitespace-pre-wrap text-muted-foreground">
-          {notes}
-        </p>
-      ) : null}
+      {body}
       {busy ? <Progress value={progress ?? null} aria-label={u.installing} /> : null}
     </Dialog>
   );
 }
 
 /** サインアウトの確認（転送中の場合だけ。04 §1.4）。 */
-function SignOutDialog({ onClose }: { onClose: () => void }) {
+function SignOutDialog({ onClose }: Readonly<{ onClose: () => void }>) {
   const active = useTransferStore((s) => activeTransferCount(s.jobs));
   const t = ja.dialog.signOut;
   return (
