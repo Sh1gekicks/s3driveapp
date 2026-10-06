@@ -4,9 +4,10 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ColumnWidths } from '@/lib/ipc';
 import type { MockBackend } from '@/lib/ipc/mock/backend';
 import { useNavStore } from '@/stores/nav';
-import { useUiStore } from '@/stores/ui';
+import { COLUMN_WIDTH, useUiStore } from '@/stores/ui';
 import { entry, findToast, fileList as list, openBucket, renderWithMock, resetScreen } from '@/test/harness';
 
 // App が使う queryClient（シングルトン）をテストごとに作り直す
@@ -279,6 +280,78 @@ describe('サイドバーの幅（03 §3）', () => {
     expect(await handle()).toHaveAttribute('aria-valuenow', '360');
     expect(width()).toBe('360px');
     expect(screen.queryByRole('complementary', { name: 'インスペクタ' })).not.toBeInTheDocument();
+  });
+});
+
+describe('リストの列の幅（03 §5.4）', () => {
+  const handle = (column: string) => screen.findByRole('separator', { name: `${column}の列の幅` });
+  /** 見出し行の列の幅（`grid-template-columns`）。 */
+  const columns = async () =>
+    (await handle('更新日')).closest<HTMLElement>('[style]')?.style.gridTemplateColumns.replaceAll(' ', '');
+  const saved = () =>
+    backend.calls
+      .filter((c) => c.cmd === 'settings_update')
+      .map((c) => (c.args.patch as { view?: { columnWidths?: ColumnWidths } }).view?.columnWidths);
+  const defaults = COLUMN_WIDTH.default;
+
+  it('列の左端のつまみを左にドラッグして広げ、離したときに保存する（60〜400px に収める）', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const h = await handle('ストレージクラス');
+    expect(h).toHaveAttribute('aria-valuenow', '200');
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: h, coords: { clientX: 800 } },
+      { coords: { clientX: 740 } },
+    ]);
+    expect(h).toHaveAttribute('aria-valuenow', '260');
+    expect(await columns()).toBe('minmax(140px,1fr)124px72px260px');
+    // ドラッグ中は保存しない
+    expect(saved()).toEqual([]);
+    // 右に動かすと狭くなる
+    await user.pointer([{ coords: { clientX: 1200 } }, { keys: '[/MouseLeft]' }]);
+    expect(h).toHaveAttribute('aria-valuenow', '60');
+    expect(saved()).toEqual([{ ...defaults, storageClass: 60 }]);
+  });
+
+  it('← で広げ → で狭め（10px ずつ）、キーを離したときに保存する。ダブルクリックで既定の幅に戻す', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    const h = await handle('サイズ');
+    h.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(h).toHaveAttribute('aria-valuenow', '82');
+    await user.keyboard('{ArrowRight}{ArrowRight}');
+    expect(h).toHaveAttribute('aria-valuenow', '62');
+    expect(saved().map((w) => w?.size)).toEqual([82, 72, 62]);
+    await user.keyboard('{End}');
+    expect(h).toHaveAttribute('aria-valuenow', '400');
+    await user.keyboard('{Home}');
+    expect(h).toHaveAttribute('aria-valuenow', '60');
+    await user.dblClick(h);
+    expect(h).toHaveAttribute('aria-valuenow', '72');
+    expect(saved().map((w) => w?.size)).toEqual([82, 72, 62, 400, 60, 72]);
+    // ほかの列の幅は変えない
+    expect(saved().at(-1)).toEqual(defaults);
+  });
+
+  it('保存した幅で起動する。幅が狭いときは「種類」の列とつまみを省く（01 §5.5）', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    const widths = { modified: 150, size: 90, kind: 70, storageClass: 240 };
+    renderApp((b) => {
+      b.settings.view.columnWidths = widths;
+    });
+    await within(await list()).findByText('logo.png');
+    expect(await columns()).toBe('minmax(200px,1fr)150px90px70px240px');
+    expect(await handle('種類')).toHaveAttribute('aria-valuenow', '70');
+
+    act(() => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+      window.dispatchEvent(new Event('resize'));
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole('separator', { name: '種類の列の幅' })).not.toBeInTheDocument(),
+    );
+    expect(await columns()).toBe('minmax(140px,1fr)150px90px240px');
   });
 });
 

@@ -1,7 +1,8 @@
-// UI だけの状態（01 §5.4）: 画面、表示モード、並べ替え、選択、インスペクタ、サイドバーの幅、検索語とフィルタ、ダイアログ。
+// UI だけの状態（01 §5.4）: 画面、表示モード、並べ替え、選択、インスペクタ、サイドバー・列の幅、検索語とフィルタ、ダイアログ。
 
 import { create } from 'zustand';
 import type {
+  ColumnWidths,
   DateFilter,
   Entry,
   FileKind,
@@ -69,6 +70,28 @@ export function clampSidebarWidth(width: number): number {
   return Math.round(Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, width)));
 }
 
+/** リスト表示の列の幅（px）の既定値と範囲（03 §5.4）。Rust 側の `ColumnWidths`・`ViewSettings::clamped` と合わせる。 */
+export const COLUMN_WIDTH = {
+  default: { modified: 124, size: 72, kind: 112, storageClass: 200 },
+  min: 60,
+  max: 400,
+} as const satisfies { default: ColumnWidths; min: number; max: number };
+
+/** 列の幅を範囲に収め、整数にする。 */
+export function clampColumnWidths(widths: ColumnWidths): ColumnWidths {
+  const clamp = (width: number, fallback: number) =>
+    Number.isFinite(width)
+      ? Math.round(Math.min(COLUMN_WIDTH.max, Math.max(COLUMN_WIDTH.min, width)))
+      : fallback;
+  const d = COLUMN_WIDTH.default;
+  return {
+    modified: clamp(widths.modified, d.modified),
+    size: clamp(widths.size, d.size),
+    kind: clamp(widths.kind, d.kind),
+    storageClass: clamp(widths.storageClass, d.storageClass),
+  };
+}
+
 /** ダイアログの種類とペイロード。 */
 export type DialogState =
   | { type: 'newFolder' }
@@ -115,6 +138,7 @@ export interface UiState {
   inspectorVisible: boolean;
   inspectorTab: 'details' | 'versions';
   sidebarWidth: number;
+  columnWidths: ColumnWidths;
   query: string;
   filters: Filters;
   filtersOpen: boolean;
@@ -128,6 +152,8 @@ export interface UiState {
   setInspectorTab: (tab: 'details' | 'versions') => void;
   /** 範囲外の値は範囲に収める。 */
   setSidebarWidth: (width: number) => void;
+  /** 範囲外の値は範囲に収める。 */
+  setColumnWidths: (widths: ColumnWidths) => void;
   setQuery: (query: string) => void;
   setFilters: (filters: Filters) => void;
   clearSearch: () => void;
@@ -151,6 +177,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   inspectorVisible: true,
   inspectorTab: 'details',
   sidebarWidth: SIDEBAR_WIDTH.default,
+  columnWidths: COLUMN_WIDTH.default,
   query: '',
   filters: NO_FILTERS,
   filtersOpen: false,
@@ -164,6 +191,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   setInspectorVisible: (inspectorVisible) => set({ inspectorVisible }),
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
+  setColumnWidths: (widths) => set({ columnWidths: clampColumnWidths(widths) }),
   setQuery: (query) => set({ query, selection: { keys: [], anchor: null } }),
   setFilters: (filters) => set({ filters, selection: { keys: [], anchor: null } }),
   clearSearch: () => set({ query: '', filters: NO_FILTERS, selection: { keys: [], anchor: null } }),

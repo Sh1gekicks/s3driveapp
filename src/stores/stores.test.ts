@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { SearchEntry, SearchResult } from '@/lib/ipc';
 import { parentPrefix, useNavStore } from './nav';
 import {
+  COLUMN_WIDTH,
+  clampColumnWidths,
   clampSidebarWidth,
   filterCount,
   NO_FILTERS,
@@ -61,6 +63,20 @@ describe('サイドバーの幅', () => {
     useUiStore.getState().setSidebarWidth(9999);
     expect(useUiStore.getState().sidebarWidth).toBe(360);
     useUiStore.getState().setSidebarWidth(SIDEBAR_WIDTH.default);
+  });
+});
+
+describe('列の幅', () => {
+  it('60〜400px の整数に収める', () => {
+    expect(clampColumnWidths({ modified: 10, size: 1000, kind: 99.6, storageClass: Number.NaN })).toEqual({
+      modified: 60,
+      size: 400,
+      kind: 100,
+      storageClass: COLUMN_WIDTH.default.storageClass,
+    });
+    useUiStore.getState().setColumnWidths({ ...COLUMN_WIDTH.default, size: 0 });
+    expect(useUiStore.getState().columnWidths).toEqual({ ...COLUMN_WIDTH.default, size: 60 });
+    useUiStore.getState().setColumnWidths(COLUMN_WIDTH.default);
   });
 });
 

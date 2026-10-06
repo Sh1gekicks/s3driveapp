@@ -181,13 +181,16 @@ mod tests {
             .patch(serde_json::json!({
                 "general": { "appearance": "dark" },
                 "transfer": { "maxFiles": 20 },
-                "view": { "sidebarWidth": 1000 }
+                "view": { "sidebarWidth": 1000, "columnWidths": { "size": 10 } }
             }))
             .unwrap();
         assert_eq!(s.general.appearance, Appearance::Dark);
         assert!(!s.general.show_hidden);
         assert_eq!(s.transfer.max_files, 8);
         assert_eq!(s.view.sidebar_width, 360);
+        // 列の幅は指定した列だけを変え、範囲に収める
+        assert_eq!(s.view.column_widths.size, 60);
+        assert_eq!(s.view.column_widths.modified, 124);
 
         let reloaded = SettingsStore::load(&path).unwrap();
         assert_eq!(reloaded.settings().general.appearance, Appearance::Dark);

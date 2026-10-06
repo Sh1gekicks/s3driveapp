@@ -2,11 +2,20 @@
 // DS: ui_kits/s3-drive/FileList.jsx。行数が多くても軽く動くよう、表示範囲だけを描画する。
 
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ChevronDown, ChevronUp, CircleAlert, Clock, CloudUpload, SearchX } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  CircleAlert,
+  Clock,
+  CloudUpload,
+  type LucideIcon,
+  SearchX,
+} from 'lucide-react';
 import * as React from 'react';
 import { useWindowFocused } from '@/app/hooks';
 import { FileIcon } from '@/components/ds/file-icon';
 import { Icon } from '@/components/ds/icon';
+import { ResizeHandle } from '@/components/ds/resize-handle';
 import { StorageClassBadge } from '@/components/ds/storage-class-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,13 +35,21 @@ import { showError } from '@/features/errors';
 import { fileKind, KIND_LABEL } from '@/lib/file-kind';
 import { formatDate, formatSize } from '@/lib/format';
 import { ja } from '@/lib/i18n/ja';
-import type { Entry, SortKey } from '@/lib/ipc';
+import type { ColumnWidths, Entry, RestoreState, SortKey } from '@/lib/ipc';
 import * as ipc from '@/lib/ipc';
 import { requireMock } from '@/lib/ipc/mock-loader';
 import { isNative } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { useNavStore } from '@/stores/nav';
-import { useUiStore } from '@/stores/ui';
+import { COLUMN_WIDTH, useUiStore } from '@/stores/ui';
+import {
+  COLUMN_SORT_KEY,
+  type ColumnKey,
+  fitColumns,
+  maxColumnWidth,
+  NAME_MIN_WIDTH,
+  visibleColumns,
+} from './columns';
 import { blankMenu, itemMenu } from './menus';
 
 const ROW_H = 28;
@@ -40,6 +57,8 @@ const TILE_H = 112;
 const TILE_MIN_W = 104;
 const GRID_GAP = 8;
 const GRID_PAD = 16;
+/** リスト表示の左右の余白（見出しの px-2、行の left-2・right-2）。 */
+const LIST_PAD = 8;
 
 const t = ja.list;
 
@@ -76,54 +95,100 @@ function useElementWidth(ref: React.RefObject<HTMLElement | null>): number {
   return width;
 }
 
+const RESTORE_BADGES: Partial<
+  Record<RestoreState['state'], { variant: 'warning' | 'success'; label: string; icon?: LucideIcon }>
+> = {
+  archived: { variant: 'warning', label: t.restoreNeeded },
+  inProgress: { variant: 'warning', label: t.restoring, icon: Clock },
+  restored: { variant: 'success', label: t.restored },
+};
+
 function RestoreBadge({ entry }: { entry: Entry }) {
-  if (entry.type !== 'file') return null;
-  switch (entry.restore.state) {
-    case 'archived':
-      return <Badge variant="warning">{t.restoreNeeded}</Badge>;
-    case 'inProgress':
-      return (
-        <Badge variant="warning" icon={Clock}>
-          {t.restoring}
-        </Badge>
-      );
-    case 'restored':
-      return <Badge variant="success">{t.restored}</Badge>;
-    default:
-      return null;
-  }
+  const badge = entry.type === 'file' ? RESTORE_BADGES[entry.restore.state] : undefined;
+  if (!badge) return null;
+  // クラス名の残りの幅に収め、収まらなければ末尾を省略する。省略しても読めない幅（40px 未満）なら隠す
+  return (
+    <span className="@container flex min-w-0 flex-1">
+      <Badge
+        variant={badge.variant}
+        icon={badge.icon}
+        className="max-w-full @max-[40px]:hidden"
+        title={badge.label}
+      >
+        <span className="truncate">{badge.label}</span>
+      </Badge>
+    </span>
+  );
 }
 
-function HeadCell({ k, label, align }: { k?: SortKey; label: string; align?: 'right' }) {
+function HeadCell({
+  k,
+  label,
+  align,
+  resizer,
+}: {
+  k?: SortKey;
+  label: string;
+  align?: 'right';
+  /** 左端（左の列との境界）に置く幅変更のつまみ。 */
+  resizer?: React.ReactNode;
+}) {
   const sort = useUiStore((s) => s.sort);
   const active = k !== undefined && sort.key === k;
   const content = (
     <>
-      {label}
-      {active ? <Icon icon={sort.dir > 0 ? ChevronUp : ChevronDown} size={12} /> : null}
+      <span className="truncate">{label}</span>
+      {active ? <Icon icon={sort.dir > 0 ? ChevronUp : ChevronDown} size={12} className="shrink-0" /> : null}
     </>
   );
   const className = cn(
-    'flex h-full items-center gap-1 px-2 font-medium text-muted-foreground',
+    'flex h-full w-full min-w-0 items-center gap-1 px-2 font-medium text-muted-foreground',
     align === 'right' && 'justify-end',
     active && 'text-foreground',
   );
-  if (!k) return <div className={className}>{content}</div>;
   return (
-    <button
-      type="button"
-      aria-label={active ? `${label}（${sort.dir > 0 ? '昇順' : '降順'}）` : label}
-      className={cn(
-        className,
-        'outline-none hover:text-foreground focus-visible:shadow-[0_0_0_3px_var(--ring-soft)]',
+    <div className="relative h-full min-w-0">
+      {k ? (
+        <button
+          type="button"
+          aria-label={active ? `${label}（${sort.dir > 0 ? '昇順' : '降順'}）` : label}
+          className={cn(
+            className,
+            'outline-none hover:text-foreground focus-visible:shadow-[0_0_0_3px_var(--ring-soft)]',
+          )}
+          onClick={() => {
+            useUiStore.getState().toggleSort(k);
+            persistView();
+          }}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className={className}>{content}</div>
       )}
-      onClick={() => {
-        useUiStore.getState().toggleSort(k);
-        persistView();
-      }}
-    >
-      {content}
-    </button>
+      {resizer}
+    </div>
+  );
+}
+
+/**
+ * 列の左端（左の列との境界）の幅変更のつまみ（03 §5.4）。境界を左に動かすと列が広がり、名前の列が狭くなる。
+ * 表示している幅（一覧に収めるために縮めた幅）から変え、ほかの列も表示している幅のまま保存する。
+ */
+function ColumnResizer({ column, fitted, max }: { column: ColumnKey; fitted: ColumnWidths; max: number }) {
+  return (
+    <ResizeHandle
+      label={t.resize(t[column])}
+      value={fitted[column]}
+      min={COLUMN_WIDTH.min}
+      max={max}
+      defaultValue={Math.min(max, COLUMN_WIDTH.default[column])}
+      pane="after"
+      onChange={(width) => useUiStore.getState().setColumnWidths({ ...fitted, [column]: width })}
+      onCommit={persistView}
+      className="-left-1"
+      lineClassName="my-auto h-3.5 w-(--hairline) bg-border group-focus-visible:h-full group-focus-visible:w-0.5"
+    />
   );
 }
 
@@ -153,7 +218,13 @@ export function FileList({
     setVisibleEntries(entries);
   }, [entries]);
 
-  const cols = narrow ? 'minmax(140px,1fr) 124px 72px 112px' : 'minmax(200px,1fr) 140px 80px 120px 120px';
+  // 列の幅（03 §5.4）。幅が分からない（最初の描画）うちは保存した幅のまま
+  const columnWidths = useUiStore((s) => s.columnWidths);
+  const columns = visibleColumns(narrow);
+  const nameMin = narrow ? NAME_MIN_WIDTH.narrow : NAME_MIN_WIDTH.wide;
+  const room = width > 0 ? Math.floor(width - LIST_PAD * 2 - nameMin) : Number.POSITIVE_INFINITY;
+  const fitted = fitColumns(columnWidths, columns, room);
+  const cols = [`minmax(${nameMin}px,1fr)`, ...columns.map((k) => `${fitted[k]}px`)].join(' ');
   const perRow = Math.max(1, Math.floor((width - GRID_PAD * 2 + GRID_GAP) / (TILE_MIN_W + GRID_GAP)));
   const rowCount = viewMode === 'list' ? entries.length : Math.ceil(entries.length / perRow);
 
@@ -329,10 +400,17 @@ export function FileList({
           style={{ gridTemplateColumns: cols }}
         >
           <HeadCell k="name" label={t.name} />
-          <HeadCell k="modified" label={t.modified} />
-          <HeadCell k="size" label={t.size} align="right" />
-          {narrow ? null : <HeadCell label={t.kind} />}
-          <HeadCell k="storageClass" label={t.storageClass} />
+          {columns.map((c) => (
+            <HeadCell
+              key={c}
+              k={COLUMN_SORT_KEY[c]}
+              label={t[c]}
+              align={c === 'size' ? 'right' : undefined}
+              resizer={
+                <ColumnResizer column={c} fitted={fitted} max={maxColumnWidth(fitted, columns, room, c)} />
+              }
+            />
+          ))}
         </div>
         <div
           role="listbox"
@@ -384,8 +462,10 @@ export function FileList({
                     <span className={cn('truncate text-sm', sub)}>{parents.get(entry.key)}</span>
                   ) : null}
                 </div>
-                <div className={cn('px-2 text-sm tabular-nums', sub)}>{formatDate(entry.lastModified)}</div>
-                <div className={cn('px-2 text-right text-sm tabular-nums', sub)}>
+                <div className={cn('truncate px-2 text-sm tabular-nums', sub)}>
+                  {formatDate(entry.lastModified)}
+                </div>
+                <div className={cn('truncate px-2 text-right text-sm tabular-nums', sub)}>
                   {entry.type === 'file' ? formatSize(entry.size) : ja.common.none}
                 </div>
                 {narrow ? null : (
@@ -393,13 +473,14 @@ export function FileList({
                     {KIND_LABEL[fileKind(entry.name, folder)]}
                   </div>
                 )}
-                <div className="flex min-w-0 items-center gap-1 px-2">
+                <div className="flex min-w-0 items-center gap-1 overflow-hidden px-2">
                   {entry.type === 'file' ? (
                     <>
                       <StorageClassBadge
                         value={entry.storageClass}
                         plain
-                        className={isSel && focused ? 'text-inherit' : undefined}
+                        truncate
+                        className={cn('shrink-0', isSel && focused && 'text-inherit')}
                       />
                       <RestoreBadge entry={entry} />
                     </>

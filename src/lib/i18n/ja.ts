@@ -117,6 +117,7 @@ export const ja = {
     size: 'サイズ',
     kind: '種類',
     storageClass: 'ストレージクラス',
+    resize: (column: string) => `${column}の列の幅`,
     emptyFolder: 'ファイルをドロップしてアップロード',
     noResults: '一致する項目はありません',
     loadFailed: '読み込めませんでした',

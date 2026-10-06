@@ -10,6 +10,7 @@ export type { BatchFinished } from './bindings/BatchFinished';
 export type { BatchProgress } from './bindings/BatchProgress';
 export type { BatchResult } from './bindings/BatchResult';
 export type { BucketInfo } from './bindings/BucketInfo';
+export type { ColumnWidths } from './bindings/ColumnWidths';
 export type { ConflictDecision } from './bindings/ConflictDecision';
 export type { Connection } from './bindings/Connection';
 export type { ConnectionInput } from './bindings/ConnectionInput';

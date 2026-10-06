@@ -43,6 +43,7 @@ function useRestoreOnce(connections: Connection[] | undefined) {
     ui.setSort(view.sort);
     ui.setInspectorVisible(view.inspector);
     ui.setSidebarWidth(view.sidebarWidth);
+    ui.setColumnWidths(view.columnWidths);
     applyAppearance(settings.data.general.appearance);
     // アップデートの自動確認（起動時と 24 時間ごと）は Rust 側が行い、update://available で知らせる（08 §7）
   }, [settings.data]);

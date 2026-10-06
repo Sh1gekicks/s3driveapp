@@ -41,7 +41,13 @@ const SESSION: UserSession = {
 
 const DEFAULT_SETTINGS: Settings = {
   general: { appearance: 'auto', downloadDir: null, showHidden: false, showMenuBarIcon: true },
-  view: { mode: 'list', sort: { key: 'name', dir: 1 }, inspector: true, sidebarWidth: 220 },
+  view: {
+    mode: 'list',
+    sort: { key: 'name', dir: 1 },
+    inspector: true,
+    sidebarWidth: 220,
+    columnWidths: { modified: 124, size: 72, kind: 112, storageClass: 200 },
+  },
   transfer: {
     maxFiles: 3,
     maxPartsPerFile: 4,

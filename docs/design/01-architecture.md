@@ -223,11 +223,11 @@ flowchart LR
 
 | ストア | 主な状態 |
 |---|---|
-| `useUiStore` | `view`、`viewMode`（`list`／`grid`）、`sort`（キーと向き）、`selection`（選択キーと起点）、`inspectorVisible`・`inspectorTab`、`sidebarWidth`、`query`、`filters`（種類・拡張子・サイズ・期間・クラス）、`filtersOpen`、`showDeleted`（削除済みの項目を表示）、`dialog`（種類とペイロード）。コンテキストメニューの開閉は Base UI のメニューが持つため、ストアには置かない |
+| `useUiStore` | `view`、`viewMode`（`list`／`grid`）、`sort`（キーと向き）、`selection`（選択キーと起点）、`inspectorVisible`・`inspectorTab`、`sidebarWidth`、`columnWidths`（リスト表示の列の幅）、`query`、`filters`（種類・拡張子・サイズ・期間・クラス）、`filtersOpen`、`showDeleted`（削除済みの項目を表示）、`dialog`（種類とペイロード）。コンテキストメニューの開閉は Base UI のメニューが持つため、ストアには置かない |
 | `useNavStore` | `connectionId`、`prefix`、`back[]`、`forward[]` |
 | `useTransferStore` | 転送ジョブの一覧と進捗（転送チャネルのイベントで更新） |
 
-`viewMode`、`sort`、インスペクタの表示有無、サイドバーの幅は設定として保存し、次回起動時に復元する。
+`viewMode`、`sort`、インスペクタの表示有無、サイドバーと列の幅は設定として保存し、次回起動時に復元する。
 
 ### 5.5 ウィンドウ幅による振る舞い
 
