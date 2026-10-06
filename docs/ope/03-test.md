@@ -147,6 +147,7 @@ pnpm exec playwright test --project=screens
 docker run --rm --ipc=host -v "$PWD":/work -v s3drive-ui-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.63.0-noble bash -c "npm i -g pnpm@12.6.0 && pnpm install --frozen-lockfile && pnpm exec playwright test"
 ```
 
+- 比較の許容は小さい（閾値を超えた画素が 20 画素まで。[09 §2.6](../design/09-testing.md#26-ビジュアル回帰テスト)）。数十画素の差でも描画の揺れではなく画面の変化なので、`test-results/` の差分画像（`*-diff.png`）で変化した箇所を確かめる。
 - 画面を意図して変えた場合（DS の更新の取り込みなど）は、差分を確認してから、上のコマンドの `playwright test` を `playwright test --project=visual --update-snapshots` にして基準画像を作り直し、コミットする。
 - イメージの版は `@playwright/test` の版と揃える（Renovate の「Playwright」グループでまとめて更新される）。
 - 失敗の詳細は `playwright-report/`（`pnpm exec playwright show-report`）と `test-results/` のトレースで確認できる。

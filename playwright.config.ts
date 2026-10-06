@@ -22,7 +22,10 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   expect: {
-    toHaveScreenshot: { animations: 'disabled', caret: 'hide', maxDiffPixelRatio: 0.005 },
+    // 同じイメージでの描画の揺れ（CI の amd64 と手元の arm64 の差を含む）は数階調のため、画素ごとの色の差の閾値
+    // （threshold。既定の 0.2 は輝度で約 53 階調）を 0.05（約 13 階調）にし、超えた画素は 20 画素まで許す。
+    // 既定の閾値と比率での許容では、一覧の列が 10px ずれても通ってしまう（09 §2.6）
+    toHaveScreenshot: { animations: 'disabled', caret: 'hide', threshold: 0.05, maxDiffPixels: 20 },
   },
   projects: [
     {
