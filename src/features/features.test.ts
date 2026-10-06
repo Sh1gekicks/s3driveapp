@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Entry } from '@/lib/ipc';
 import { selectedCount } from './actions';
 import { summarize } from './batch';
+import { fitColumns, maxColumnWidth, visibleColumns } from './browser/columns';
 import { blankMenu, itemMenu } from './browser/menus';
 
 const err = { code: 'ACCESS_DENIED' as const, message: 'x', retryable: false };
@@ -85,5 +86,37 @@ describe('コンテキストメニュー（03 §9.1〜9.2）', () => {
 
   it('空白部分', () => {
     expect(ids(blankMenu())).toEqual(['newFolder', 'upload', 'uploadFolder', 'reload']);
+  });
+});
+
+describe('リスト表示の列の幅（03 §5.4）', () => {
+  const widths = { modified: 124, size: 72, kind: 112, storageClass: 200 };
+  const wide = visibleColumns(false);
+
+  it('幅が足りれば保存した幅のまま', () => {
+    expect(fitColumns(widths, wide, 508)).toEqual(widths);
+    expect(fitColumns(widths, wide, Number.POSITIVE_INFINITY)).toEqual(widths);
+  });
+
+  it('足りなければ種類 → ストレージクラス → サイズ → 更新日の順に 60px まで縮める', () => {
+    expect(fitColumns(widths, wide, 484)).toEqual({ ...widths, kind: 88 });
+    expect(fitColumns(widths, wide, 400)).toEqual({ ...widths, kind: 60, storageClass: 144 });
+    expect(fitColumns(widths, wide, 250)).toEqual({ modified: 70, size: 60, kind: 60, storageClass: 60 });
+    // すべて最小の幅でも収まらなければ最小の幅のまま
+    expect(fitColumns(widths, wide, 100)).toEqual({ modified: 60, size: 60, kind: 60, storageClass: 60 });
+  });
+
+  it('幅が狭いときは「種類」を省き、その幅は変えない', () => {
+    const narrow = visibleColumns(true);
+    expect(narrow).toEqual(['modified', 'size', 'storageClass']);
+    expect(fitColumns(widths, narrow, 300)).toEqual({ ...widths, storageClass: 104 });
+  });
+
+  it('広げられるのは名前の列が最小の幅になるまで（60〜400px）', () => {
+    expect(maxColumnWidth(widths, wide, 600, 'storageClass')).toBe(292);
+    expect(maxColumnWidth(widths, wide, Number.POSITIVE_INFINITY, 'size')).toBe(400);
+    // 余りがなければ今の幅まで
+    const fitted = fitColumns(widths, wide, 400);
+    expect(maxColumnWidth(fitted, wide, 400, 'modified')).toBe(124);
   });
 });

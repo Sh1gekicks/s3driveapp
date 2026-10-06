@@ -34,7 +34,8 @@ Tauri に依存しないよう `s3drive-core` の `SettingsStore` で読み書�
     "mode": "list",
     "sort": { "key": "name", "dir": 1 },
     "inspector": true,
-    "sidebarWidth": 220
+    "sidebarWidth": 220,
+    "columnWidths": { "modified": 124, "size": 72, "kind": 112, "storageClass": 200 }
   },
   "transfer": {
     "maxFiles": 3,
@@ -82,6 +83,7 @@ Tauri に依存しないよう `s3drive-core` の `SettingsStore` で読み書�
 | `general.showMenuBarIcon` | メニューバーに表示 | `true` |
 | `view.*` | 表示モード・並べ替え・インスペクタの表示 | リスト・名前昇順・表示 |
 | `view.sidebarWidth` | サイドバーの幅（px）。180〜360 に収める | `220` |
+| `view.columnWidths` | リスト表示の列（更新日・サイズ・種類・ストレージクラス）の幅（px）。60〜400 に収める。名前の列は残りの幅を使うため持たない | 124 / 72 / 112 / 200 |
 | `transfer.maxFiles` / `maxPartsPerFile` | 並列数 | 3 / 4 |
 | `transfer.multipartThresholdMb` | マルチパートにする最小サイズ | 16 |
 | `transfer.defaultStorageClass` | アップロード時のストレージクラス（接続の `defaultStorageClass` が優先） | `STANDARD` |

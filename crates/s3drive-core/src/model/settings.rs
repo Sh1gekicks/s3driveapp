@@ -62,6 +62,8 @@ pub struct ViewSettings {
     pub inspector: bool,
     /// サイドバーの幅（px）。
     pub sidebar_width: u32,
+    /// リスト表示の列の幅（px）。
+    pub column_widths: ColumnWidths,
 }
 
 impl Default for ViewSettings {
@@ -71,16 +73,48 @@ impl Default for ViewSettings {
             sort: Sort::default(),
             inspector: true,
             sidebar_width: 220,
+            column_widths: ColumnWidths::default(),
         }
     }
 }
 
 impl ViewSettings {
-    /// 範囲外の値を設計上の範囲に収める（03 §3）。
+    /// 範囲外の値を設計上の範囲に収める（03 §3・§5.4）。
     pub fn clamped(&self) -> Self {
         let mut s = self.clone();
         s.sidebar_width = s.sidebar_width.clamp(180, 360);
+        let c = &mut s.column_widths;
+        for w in [
+            &mut c.modified,
+            &mut c.size,
+            &mut c.kind,
+            &mut c.storage_class,
+        ] {
+            *w = (*w).clamp(60, 400);
+        }
         s
+    }
+}
+
+/// リスト表示の列の幅（px）。名前の列は残りの幅を使うため持たない（03 §5.4）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct ColumnWidths {
+    pub modified: u32,
+    pub size: u32,
+    pub kind: u32,
+    pub storage_class: u32,
+}
+
+impl Default for ColumnWidths {
+    fn default() -> Self {
+        Self {
+            modified: 124,
+            size: 72,
+            kind: 112,
+            storage_class: 200,
+        }
     }
 }
 
@@ -310,6 +344,8 @@ mod tests {
         assert_eq!(file.settings.view.mode, ViewMode::Grid);
         // サイドバーの幅がない（0.2.0 以前の）ファイルは既定の幅にする
         assert_eq!(file.settings.view.sidebar_width, 220);
+        // 列の幅がない（0.3.0 以前の）ファイルは既定の幅にする
+        assert_eq!(file.settings.view.column_widths, ColumnWidths::default());
         assert_eq!(file.settings.transfer.max_files, 3);
         let account = &file.accounts["123"];
         assert_eq!(account.connections[0].bucket, "b");
@@ -344,5 +380,32 @@ mod tests {
         assert_eq!(narrow.clamped().sidebar_width, 180);
         assert_eq!(wide.clamped().sidebar_width, 360);
         assert_eq!(ViewSettings::default().clamped().sidebar_width, 220);
+    }
+
+    #[test]
+    fn column_widths_are_clamped() {
+        let s = ViewSettings {
+            column_widths: ColumnWidths {
+                modified: 0,
+                size: 999,
+                kind: 60,
+                storage_class: 400,
+            },
+            ..ViewSettings::default()
+        }
+        .clamped();
+        assert_eq!(
+            s.column_widths,
+            ColumnWidths {
+                modified: 60,
+                size: 400,
+                kind: 60,
+                storage_class: 400,
+            }
+        );
+        assert_eq!(
+            ViewSettings::default().clamped().column_widths,
+            ColumnWidths::default()
+        );
     }
 }
