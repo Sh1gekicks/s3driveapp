@@ -1,9 +1,12 @@
 // 主要な操作の流れ（09 §2.4）。モックバックエンドで、メニュー・ショートカット・ダイアログから操作する。
 
 import { QueryClient } from '@tanstack/react-query';
+import { emit } from '@tauri-apps/api/event';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryClient } from '@/app/query-client';
+import { qk } from '@/app/query-keys';
 import { signOut, uploadSelection } from '@/features/actions';
 import { handleCommand } from '@/features/commands';
 import type { CostSummary, TransferJob } from '@/lib/ipc';
@@ -163,6 +166,43 @@ describe('名前の変更・移動・クラス変更・取り出し', () => {
     await user.click(within(dialog).getByRole('button', { name: '取り出し' }));
     expect(await findToast('取り出しを開始しました')).toHaveAttribute('data-tone', 'success');
     expect(backend.calls.some((c) => c.cmd === 'objects_request_restore')).toBe(true);
+  });
+});
+
+describe('アーカイブの取り出しの完了（04 §8.4、03 §11）', () => {
+  const completed = { connectionId: 'conn-tokyo', key: 'backups/db-2026-09-01.sql.gz' };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('ウィンドウが前面になければ、トーストに加えて macOS の通知を 1 回だけ出す', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const { backend } = renderWithMock();
+    await within(await fileList()).findByText('logo.png');
+    await waitFor(() => expect(queryClient.getQueryData(qk.settings)).toBeDefined());
+    await act(() => emit('restore://completed', completed));
+    expect(await findToast('取り出しが完了しました')).toHaveAttribute('data-tone', 'success');
+    const notified = backend.calls.filter((c) => c.cmd === 'app_notify');
+    expect(notified).toHaveLength(1);
+    expect(notified[0]?.args).toEqual({
+      title: '取り出しが完了しました',
+      body: '「db-2026-09-01.sql.gz」をダウンロードできます',
+    });
+  });
+
+  it('設定「完了時に通知する」がオフなら、macOS の通知は出さない', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const { backend } = renderWithMock({
+      before: (b) => {
+        b.settings.transfer.notifyOnComplete = false;
+      },
+    });
+    await within(await fileList()).findByText('logo.png');
+    await waitFor(() => expect(queryClient.getQueryData(qk.settings)).toBeDefined());
+    await act(() => emit('restore://completed', completed));
+    expect(await findToast('取り出しが完了しました')).toBeInTheDocument();
+    expect(backend.calls.some((c) => c.cmd === 'app_notify')).toBe(false);
   });
 });
 

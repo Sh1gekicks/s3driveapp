@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use s3drive_core::model::{IndexUpdated, UpdateInfo};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 use crate::events::{INDEX_UPDATED, RESTORE_COMPLETED, UPDATE_AVAILABLE, emit_all};
@@ -67,29 +66,13 @@ pub fn start(app: &AppHandle) {
     });
 }
 
+/// 完了したものは `restore://completed` で知らせる。トーストと macOS の通知（設定「完了時に通知する」に従う）は
+/// メインウィンドウのフロントエンドが出す（03 §11）。ここでも通知すると二重になり、設定でも止められない。
 async fn check_restores(app: &AppHandle) {
     let core = app.state::<AppState>().core.clone();
     match core.objects().check_restores().await {
         Ok(done) => {
             for c in done {
-                let name = c
-                    .key
-                    .rsplit('/')
-                    .find(|s| !s.is_empty())
-                    .unwrap_or(&c.key)
-                    .to_string();
-                let focused = app
-                    .get_webview_window(crate::window::MAIN)
-                    .and_then(|w| w.is_focused().ok())
-                    .unwrap_or(false);
-                if !focused {
-                    let _ = app
-                        .notification()
-                        .builder()
-                        .title("取り出しが完了しました")
-                        .body(format!("「{name}」をダウンロードできます"))
-                        .show();
-                }
                 emit_all(app, RESTORE_COMPLETED, c);
             }
         }
