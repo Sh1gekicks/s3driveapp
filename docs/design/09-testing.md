@@ -107,7 +107,7 @@ CloudWatch の S3 日次メトリクス、Cost Explorer、Price List は moto �
 | Google | 本物のサインイン、許可リスト、サインアウト、トークン失効後の再サインイン |
 | 実 AWS | 検証用アカウントでの CloudWatch・Cost Explorer・Price List、AssumeRole、SSE-KMS、アーカイブの取り出し |
 | アクセシビリティ | VoiceOver での全操作、キーボードだけでの主要操作、コントラスト |
-| 配布 | Gatekeeper の警告なしで起動できる、前のバージョンからの自動更新 |
+| 配布 | 利用者向けの手順（[08 §6.1](08-cicd.md#61-利用者のインストール手順リリースノートに記載する)）どおりに初回起動できる（公証していないため、初回は Gatekeeper に止められる）、前のバージョンからの自動更新 |
 
 ## 3. テスト環境
 

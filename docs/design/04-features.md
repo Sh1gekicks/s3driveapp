@@ -167,6 +167,8 @@ sequenceDiagram
 
 表示メニュー「削除済みの項目を表示」が有効なときは、`ListObjectVersions`（`Prefix` = 表示中のフォルダ、`Delimiter` = `/`）も取得し、最新のバージョンが削除マーカーのキーを削除済みの項目として一覧に加える。現在の一覧にないプレフィックスは削除済みのフォルダとして加える。
 
+- 一覧の 1 ページ目を返すときにまとめて取得する。一覧の表示を待たせないよう、`ListObjectVersions` は最大 20 ページ（1 ページ 1,000 件。バージョンと削除マーカーを合わせて約 2 万件）までしか読まない。キーの順でそれより後ろにある削除済みの項目は表示しない。
+
 ### 3.4 並べ替え
 
 - 並べ替えはフロントエンドで、取得済みの項目に対して行う。フォルダを常に先頭にする。
@@ -198,7 +200,7 @@ sequenceDiagram
   opt 同名の項目がある
     UI->>UI: DLG-08 で置き換え／スキップ／両方を残すを決める
   end
-  UI->>RS: upload_start(計画 ID, 決定, 進捗チャネル)
+  UI->>RS: upload_start(計画 ID, 決定)
   loop 各ファイル（既定 3 並列）
     alt 16 MB 未満
       RS->>S3: PutObject
@@ -212,6 +214,8 @@ sequenceDiagram
   RS->>RS: 検索インデックスを更新
   RS-->>UI: 完了イベント（成功・失敗の件数）
 ```
+
+進捗と完了のイベントは、`upload_start` に渡すチャネルではなく、起動時に `transfer_subscribe` で渡したチャネル（`TransferEvent`）で、すべての転送ジョブの分をまとめて受け取る（[05 §3.5](05-backend-ipc.md#35-転送)）。ダウンロードも同じ。
 
 ### 4.2 転送の方式
 
@@ -329,10 +333,14 @@ sequenceDiagram
   participant UI as フロントエンド
   participant RS as Rust（objects）
   participant S3 as Amazon S3
-  UI->>RS: objects_move(接続, 対象, 移動先, 進捗チャネル)
-  RS->>S3: ListObjectsV2（フォルダは配下を列挙）
+  UI->>RS: objects_find_conflicts(接続, 対象, 移動先)
   RS->>S3: ListObjectsV2（移動先の同名チェック）
-  RS-->>UI: 同名の項目があれば確認を要求（DLG-08）
+  RS-->>UI: 同名の項目
+  opt 同名の項目がある
+    UI->>UI: DLG-08 で置き換え／スキップ／両方を残すを決める
+  end
+  UI->>RS: objects_move(接続, 対象, 移動先, 決定, 進捗チャネル)
+  RS->>S3: ListObjectsV2（フォルダは配下を列挙）
   loop 各オブジェクト（8 並列）
     alt 5 GB 以下
       RS->>S3: CopyObject（MetadataDirective=COPY、StorageClass=元のクラス）
@@ -656,9 +664,11 @@ stateDiagram-v2
 | 削除 | `DeleteObjects`、`DeleteObject` | `s3:DeleteObject`、`s3:DeleteObjectVersion` |
 | 移動・クラス変更・バージョン復元 | `CopyObject`、`UploadPartCopy` | `s3:GetObject`、`s3:GetObjectVersion`、`s3:PutObject`、`s3:GetObjectTagging`、`s3:PutObjectTagging` |
 | アーカイブの取り出し | `RestoreObject` | `s3:RestoreObject` |
-| 未完了のアップロード | `ListMultipartUploads`、`ListParts` | `s3:ListBucketMultipartUploads`、`s3:ListMultipartUploadParts` |
+| 中断したアップロードの後始末（§14.5） | `AbortMultipartUpload`（SQLite に記録したアップロード ID を指定する。一覧は取得しない） | `s3:AbortMultipartUpload` |
 | 利用容量 | `cloudwatch:GetMetricData` | `cloudwatch:GetMetricData` |
 | コスト | `ce:GetCostAndUsage`、`ce:GetCostForecast` | 同左 |
 | 単価 | `pricing:GetProducts` | 同左 |
+
+転送の再開（Phase 4。§14.6）を実装するときは、`ListParts`（`s3:ListMultipartUploadParts`）を加える。現在は `ListMultipartUploads`・`ListParts` を呼ばないため、それらの権限は不要である。
 
 IAM ポリシーの例は [07 §4](07-security.md#4-iam-ポリシー) を参照する。

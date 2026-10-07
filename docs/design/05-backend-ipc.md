@@ -39,7 +39,7 @@ impl<E: serde::Serialize + Clone + Send + Sync + 'static> ProgressSink<E> for Ch
 | `transfer` | `Core::{upload_prepare, upload_start, download_start, transfer_retry, abort_stale_uploads}`、`TransferManager::{subscribe, enqueue, cancel, shutdown, wait_idle}`、`multipart` | 転送キューと実行 |
 | `search` | `IndexRunner`（全件走査）、`upsert`／`remove`（アプリ自身の変更の反映）、`SearchService::{query, status, rebuild, delete}` | 検索インデックス |
 | `metrics` | `Core::{metrics_storage, cost_summary, cost_refresh, pricing_get, clear_metrics_cache}`、`storage`（CloudWatch）、`cost`（Cost Explorer）、`pricing`（Price List） | 容量・コスト・単価 |
-| `jobs` | `JobRegistry`、`JobHandle`、`JobId` | ジョブの登録・キャンセル |
+| `jobs` | `JobRegistry`、`JobKind`、`ProgressSink` | ジョブの登録・キャンセルと進捗の通知 |
 | `selection` | `SelectionRegistry` | ファイル選択・ドロップで得たローカルパスの保管（§3.9） |
 | `store` | `Db`（コネクションプール）、`migrations.sql`、`SettingsStore`、`SecretStore`（`KeyringSecretStore`／テスト用の `MemorySecretStore`）、`metrics_cache` | 永続化（[06-data.md](06-data.md)） |
 | `util` | `key`（正規化・検証・結合）、`time`、`region`（リージョン名）、`natural_cmp`（自然順の比較） | 共通処理 |
@@ -358,7 +358,7 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | `menu://action` | `{ id: string }` | アプリのメニュー・メニューバー常駐の項目が選ばれた |
 | `dragdrop://enter`／`dragdrop://over`／`dragdrop://leave` | `{ position: { x, y }, names: string[] }` | Finder からのドラッグ中の表示 |
 | `dragdrop://drop` | `{ selectionId, position, names }` | ドロップされた（パスは `SelectionRegistry` に保管済み） |
-| `restore://completed` | `{ connectionId, key }` | アーカイブの取り出し完了 |
+| `restore://completed` | `{ connectionId, key }` | アーカイブの取り出し完了。トーストと macOS の通知（`app_notify`。設定「完了時に通知する」に従う）はメインウィンドウのフロントエンドが出し、Rust 側では通知しない |
 | `index://updated` | `{ connectionId, status: IndexStatus }` | 背景でのインデックス更新の完了 |
 | `update://available` | `{ version, notes }` | 自動確認で新しいバージョンが見つかった（[08 §7](08-cicd.md#7-自動更新)） |
 

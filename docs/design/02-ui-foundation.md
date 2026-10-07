@@ -122,13 +122,7 @@
 @import "./tokens/colors.css";   /* DS: tokens/colors.css（ライト／ダーク） */
 @import "./tokens/layout.css";   /* DS: tokens/spacing.css のうちサイズ・モーション・マテリアル */
 
-/* dark: バリアントを OS 設定（自動）と明示指定の両方に追従させる */
-@custom-variant dark {
-  @media (prefers-color-scheme: dark) {
-    &:where(:root:not([data-theme="light"]) *) { @slot; }
-  }
-  &:where([data-theme="dark"] *) { @slot; }
-}
+/* ライト／ダークの切り替えは tokens/colors.css の CSS 変数で行う。dark: バリアントは使わない */
 
 @theme {
   /* DS: tokens/typography.css */
@@ -185,9 +179,12 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-field: var(--field-bg);
+  --color-seg-active: var(--seg-active);
+  --color-switch-off: var(--switch-off);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-strong: var(--sidebar-accent-strong);
   --color-sidebar-border: var(--sidebar-border);
   --color-row-hover: var(--row-hover);
   --color-row-stripe: var(--row-stripe);
@@ -195,6 +192,10 @@
   --color-row-selected-foreground: var(--row-selected-foreground);
   --color-row-selected-inactive: var(--row-selected-inactive);
   --color-overlay: var(--overlay);
+  --color-tooltip: var(--tooltip-bg);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+  --color-azure-500: var(--azure-500);   /* アカウントのアバター（03 §5.1） */
+  --color-gray-400: var(--gray-400);     /* バージョンタブの点（03 §5.6） */
   --color-sc-standard: var(--sc-standard);
   --color-sc-intelligent-tiering: var(--sc-intelligent-tiering);
   --color-sc-standard-ia: var(--sc-standard-ia);
@@ -216,6 +217,8 @@
   backdrop-filter: var(--material-blur);
 }
 @utility selectable { -webkit-user-select: text; user-select: text; cursor: text; }
+/* 0.5px のヘアライン（hairline-t／-r／-l も同様） */
+@utility hairline-b { border-bottom: var(--hairline) solid var(--border); }
 
 @layer base {
   /* DS: tokens/base.css の内容をここに置く（§7.3） */
@@ -227,6 +230,7 @@
 - DS の `base.css` は `html` にも `font-size: 13px` を指定するため、rem 基準の Tailwind 既定値（余白・文字サイズ）がずれる。`--spacing` と `--text-*` を px で上書きして回避する。
 - Tailwind の影ユーティリティ（`shadow-sm` など）はテーマの値を埋め込むため、ライト／ダークで変わる DS の影には使わない。`elevation-*` を使う。
 - レイアウト寸法は `h-(--row-h)`、`w-(--sidebar-w)` のように変数を直接参照する。
+- `dark:` バリアントは使わない。色はすべてトークン（`bg-background`、`text-muted-foreground` など）で指定し、ライト／ダーク（OS の設定と `data-theme` による手動指定。§7.2）の切り替えは `tokens/colors.css` の変数だけで行う。クラスで明暗を分けると、手動指定と OS の設定の両方に追従させる仕組みが別に必要になるため。
 
 ## 5. shadcn/ui on Base UI のセットアップ
 
@@ -246,7 +250,7 @@
      breadcrumb separator kbd spinner empty skeleton
    ```
 
-5. 生成されたテーマ CSS を §4 の構成に置き換え、各コンポーネントのサイズ・角丸・色を §6 に合わせて調整する。
+5. 生成されたテーマ CSS を §4 の構成に置き換え、各コンポーネントのサイズ・角丸・色を §6 に合わせて調整する。生成したファイルは、DS の部品の単位で §6 の「実装」列のファイルにまとめ直す（例: `toggle-group` は `segmented-control`、`context-menu` と `dropdown-menu` は `menu`、`alert-dialog` は `dialog`、`skeleton`・`spinner`・`empty` は `misc`）。
 
 `components.json` の例（`style` は `base-<プリセット名>`。見た目は DS のトークンで上書きするため、プリセットは初期化時の既定でよい）:
 
@@ -278,26 +282,26 @@
 | DS コンポーネント | 実装 | DS 仕様の要点 | 実装上の調整 |
 |---|---|---|---|
 | Button | `ui/button` | variant: default／secondary／outline／ghost／destructive／link。size: sm 24／md 28／lg 32px。13px・medium・角丸 6。1 画面に default は 1 つ | size 名を DS に合わせる。ホバーは背景を 6〜10% 濃く、押下はさらに濃く。拡大縮小しない |
-| IconButton | `ui/button`（icon サイズ）＋ `ui/tooltip` | `label` 必須（アクセシブル名とツールチップ）。`active` で押下状態 | `aria-label` と `aria-pressed` を付ける。ツールチップにショートカットを併記する |
-| Icon | `lucide-react` | 線幅 1.75。ツールバー・行 16px、小ボタン 14px、バッジ 12px、空状態 32px | 既定値を持つ `<Icon>` ラッパーを用意する |
-| Input | `ui/input`、`ui/field`、`ui/input-group` | ラベルは上、ヒント・エラーは下。高さ 28（sm 24）。先頭アイコン（検索）。入力文字は選択可。名前やキーを入力するため、自動の大文字化・修正・スペルチェックは既定で無効（`autocapitalize="off"`、`autocorrect="off"`、`spellcheck="false"`。WKWebView は macOS の「文頭を自動的に大文字にする」を入力欄にも適用する） | 枠はヘアライン、背景 `--field-bg`、影 `--shadow-xs`。フォーカス時は枠も `--ring` |
+| IconButton | `ui/icon-button`（`ui/button` の icon サイズ＋ `ui/tooltip`） | `label` 必須（アクセシブル名とツールチップ）。`active` で押下状態 | `aria-label` と `aria-pressed` を付ける。ツールチップにショートカットを併記する |
+| Icon | `ds/icon`（`lucide-react` のラッパー） | 線幅 1.75。ツールバー・行 16px、小ボタン 14px、バッジ 12px、空状態 32px | 既定値を持つ `<Icon>` ラッパーを用意する |
+| Input | `ui/input`（先頭アイコンは `icon` で指定）、`ui/field` | ラベルは上、ヒント・エラーは下。高さ 28（sm 24）。先頭アイコン（検索）。入力文字は選択可。名前やキーを入力するため、自動の大文字化・修正・スペルチェックは既定で無効（`autocapitalize="off"`、`autocorrect="off"`、`spellcheck="false"`。WKWebView は macOS の「文頭を自動的に大文字にする」を入力欄にも適用する） | 枠はヘアライン、背景 `--field-bg`、影 `--shadow-xs`。フォーカス時は枠も `--ring` |
 | Select | `ui/native-select` | macOS のポップアップボタン（ネイティブの select ＋上下シェブロン） | WKWebView ではネイティブのメニューが開き macOS らしいため、Base UI の Select ではなく native-select を使う |
 | Checkbox | `ui/checkbox` | 14px。未確定状態あり | |
 | Switch | `ui/switch` | macOS 風トグル。設定行ではラベル左・スイッチ右 | |
-| SegmentedControl | `ui/toggle-group`（単一選択） | 表示切り替え、インスペクタのタブ。`block` で等幅 | 選択中のセグメントは `--seg-active` と `elevation-sm` |
+| SegmentedControl | `ui/segmented-control`（Base UI の ToggleGroup。単一選択） | 表示切り替え、インスペクタのタブ。`block` で等幅 | 選択中のセグメントは `--seg-active` と `elevation-sm` |
 | Badge | `ui/badge` | 高さ 18px。default／secondary／outline／success／warning／destructive。アイコン付き | success／warning の variant を追加する |
 | StorageClassBadge | `ds/storage-class-badge` | ドット（`--sc-*`）＋名前。`short`（短い名前）、`plain`（表のセル用、背景なし） | DS 独自 |
 | Progress | `ui/progress`、`ds/usage-bar` | 転送の進捗（高さ 6）と、クラス別の積み上げ（セグメント） | 積み上げは DS 独自の `UsageBar` にする |
-| Toast | `ui/toast`（Base UI の Toast） | 右下に積む。幅 340、マテリアル、アイコン・トーン・進捗バー・アクション | shadcn の Base UI 版は Sonner ではなく toast を使う |
+| Toast | `ui/toaster`（Base UI の Toast） | 右下に積む。幅 340、マテリアル、アイコン・トーン・進捗バー・アクション | shadcn の Base UI 版は Sonner ではなく toast を使う |
 | Tooltip | `ui/tooltip` | 暗い小さなラベル。ショートカットがあれば併記 | ショートカットは `ui/kbd` で表記 |
-| Dialog | `ui/alert-dialog`（確認）、`ui/dialog`（入力） | ウィンドウ内のオーバーレイ。色付きタイルのアイコン、tone（default／destructive）、主ボタンは右端。幅 420 が既定 | 背面は `--overlay`。角丸 12、影 `--shadow-lg` |
-| Menu | `ui/context-menu`、`ui/dropdown-menu` | 幅 220。マテリアル。ホバーで primary 塗り＋白文字（macOS 準拠）。ショートカット表示、破壊的項目 | ハイライト色を DS に合わせる |
-| SidebarItem / SidebarSection | `ds/sidebar-item`、`ds/sidebar-section` | 行 28px、見出し 11px semibold・muted | shadcn の `sidebar` はレイアウト機構が大きく、vibrancy やタイトルバー領域の扱いが DS と異なるため使わない |
-| Breadcrumbs | `ui/breadcrumb` | 先頭はバケット（database アイコン）、最後が現在のフォルダ | 幅が足りないときは中間を省略記号にまとめる |
+| Dialog | `ui/dialog`（確認は `alert` を指定して Base UI の AlertDialog、入力は Dialog） | ウィンドウ内のオーバーレイ。色付きタイルのアイコン、tone（default／destructive）、主ボタンは右端。幅 420 が既定 | 背面は `--overlay`。角丸 12、影 `--shadow-lg` |
+| Menu | `ui/menu`（`ContextMenu`、`DropdownMenu`） | 幅 220。マテリアル。ホバーで primary 塗り＋白文字（macOS 準拠）。ショートカット表示、破壊的項目 | ハイライト色を DS に合わせる |
+| SidebarItem / SidebarSection | `ds/sidebar-item`（`SidebarItem`、`SidebarSection`） | 行 28px、見出し 11px semibold・muted | shadcn の `sidebar` はレイアウト機構が大きく、vibrancy やタイトルバー領域の扱いが DS と異なるため使わない |
+| Breadcrumbs | `ui/breadcrumbs` | 先頭はバケット（database アイコン）、最後が現在のフォルダ | 幅が足りないときは中間を省略記号にまとめる |
 | FileIcon | `ds/file-icon` | 拡張子から種別を判定し、Lucide のグリフ＋`--ft-*` 色＋ 22% の塗り | 対応表は §8.2 |
 | AppWindow | `ds/app-shell` | サイドバー 220、ツールバー 52（タイトルバーを兼ねる）、インスペクタ 280 | 信号機ボタンは OS が描画するため、DS の `TrafficLights` モックは使わない |
 
-読み込み中の表示には `ui/skeleton`（一覧）と `ui/spinner`（ボタン内）、空状態には `ui/empty` を使う。
+読み込み中の表示には `ui/misc` の `Skeleton`（一覧）と `Spinner`（ボタン内）、空状態には同じく `Empty` を使う。
 
 ## 7. macOS ネイティブ化の実装
 

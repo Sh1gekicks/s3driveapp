@@ -40,6 +40,7 @@ impl<E: Clone> MemorySink<E> {
     }
 }
 
+/// ジョブの種類（01 §6.2）。取り出しの要求とメトリクス・コストの取得は、コマンドの戻り値で結果を返すためジョブにしない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobKind {
     Upload,
@@ -47,9 +48,7 @@ pub enum JobKind {
     Delete,
     Move,
     StorageClass,
-    RestoreRequest,
     IndexBuild,
-    MetricsRefresh,
 }
 
 struct JobEntry {
