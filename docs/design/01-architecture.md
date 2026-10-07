@@ -91,7 +91,7 @@ flowchart TB
 |---|---|
 | プロセス | 単一プロセス（WebView は WebKit の子プロセス群）。`tauri-plugin-single-instance` で二重起動を防ぎ、2 つ目の起動は既存ウィンドウを前面に出す |
 | 非同期処理 | Tauri が管理する tokio ランタイム（`tauri::async_runtime`）で実行する |
-| 長時間処理 | 転送、一括操作（削除・移動・クラス変更）、インデックス構築、メトリクス取得は「ジョブ」として tokio タスクで実行し、進捗を `Channel` で返す（§6.2） |
+| 長時間処理 | 転送、一括操作（削除・移動・クラス変更）、インデックス構築は「ジョブ」として tokio タスクで実行し、進捗を `Channel` で返す（§6.2）。取り出しの要求（`objects_request_restore`）とメトリクス・コストの取得は、ジョブにせず、進捗を通知しないでコマンドの戻り値で結果を返す |
 | DB アクセス | コネクションプールから取得し、`spawn_blocking` 上で実行する |
 | ウィンドウ | `main`（メイン）と `settings`（設定）の 2 つ。メインは初回表示時に生成し、閉じても破棄せず隠す |
 | 常駐 | メニューバー常駐（トレイ）を既定で有効にする。メインウィンドウを閉じても転送は継続し、Dock アイコンのクリックまたはメニューバーから再表示する。⌘Q で終了し、転送中は確認する |
@@ -265,7 +265,7 @@ DS の UI キットに合わせ、メインウィンドウのコンテンツ幅�
 | 項目 | 内容 |
 |---|---|
 | ジョブ ID | UUID。フロントエンドはこの ID で進捗の購読とキャンセルを行う |
-| 種類 | `upload`、`download`、`delete`、`move`、`storageClass`、`restoreRequest`、`indexBuild`、`metricsRefresh` |
+| 種類 | `upload`、`download`、`delete`、`move`（名前の変更を含む）、`storageClass`、`indexBuild`（`JobKind`） |
 | 状態 | `queued` → `running` → `succeeded`／`failed`／`canceled`（一部成功は `succeeded` に失敗件数を付ける） |
 | キャンセル | `JobRegistry` がジョブごとに `CancellationToken` を持ち、`job_cancel` コマンドで発火する |
 | 進捗通知 | ジョブの開始時に渡された `Channel` へ送る。1 ジョブあたり最大 10 回/秒に間引く |

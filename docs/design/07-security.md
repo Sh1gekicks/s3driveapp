@@ -105,7 +105,6 @@ AssumeRole を使う場合はロールに、使わない場合は IAM ユーザ�
       "Action": [
         "s3:ListBucket",
         "s3:ListBucketVersions",
-        "s3:ListBucketMultipartUploads",
         "s3:GetBucketVersioning",
         "s3:GetEncryptionConfiguration"
       ],
@@ -122,7 +121,6 @@ AssumeRole を使う場合はロールに、使わない場合は IAM ユーザ�
         "s3:DeleteObjectVersion",
         "s3:RestoreObject",
         "s3:AbortMultipartUpload",
-        "s3:ListMultipartUploadParts",
         "s3:GetObjectTagging",
         "s3:GetObjectVersionTagging",
         "s3:PutObjectTagging"
@@ -144,6 +142,8 @@ AssumeRole を使う場合はロールに、使わない場合は IAM ユーザ�
   ]
 }
 ```
+
+アプリが呼ぶ API だけに絞っている（[04 §15](04-features.md#15-aws-api-対応表)）。未完了のマルチパートアップロードの一覧（`s3:ListBucketMultipartUploads`）とパートの一覧（`s3:ListMultipartUploadParts`）は使わない。転送の再開（Phase 4）を実装するときに `s3:ListMultipartUploadParts` を加える。
 
 権限が足りない場合の振る舞い:
 
