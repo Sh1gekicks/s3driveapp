@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use rusqlite_migration::{M, Migrations};
 
 use crate::error::{CoreError, CoreResult};
@@ -36,6 +36,10 @@ fn init_connection(conn: &mut Connection) -> rusqlite::Result<()> {
          PRAGMA busy_timeout = 5000;
          PRAGMA synchronous = NORMAL;",
     )?;
+    // トランザクションは書き込みのために使うため、開始時に書き込みロックを取る。既定の DEFERRED では、
+    // 読み取りから書き込みに移るとき（接続が初めて FTS5 の表に触れて設定を読む場合を含む）に他の接続が
+    // 書き込み中だと、busy_timeout で待たずに SQLITE_BUSY になる
+    conn.set_transaction_behavior(TransactionBehavior::Immediate);
     // 検索結果を一覧と同じ自然順（数字は数値として比べる）で並べる（04 §10.2）
     conn.create_collation("NATURAL_ORDER", crate::util::natural_cmp)
 }
@@ -201,6 +205,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn write_transactions_wait_for_other_writers() {
+        let (db, _dir) = Db::open_temp().unwrap();
+        let mut writer = db.pool.get().unwrap();
+        // まだ FTS5 の表に触れていない接続
+        let mut fresh = db.pool.get().unwrap();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|s| {
+            s.spawn(move || {
+                let tx = writer.transaction().unwrap();
+                tx.execute(
+                    "INSERT INTO index_state (connection_id, status, generation) VALUES ('a', 'building', 1)",
+                    [],
+                )
+                .unwrap();
+                locked_tx.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                tx.commit().unwrap();
+            });
+            locked_rx.recv().unwrap();
+            // 書き込み中の接続があっても、SQLITE_BUSY にならずに待って書き込める
+            let tx = fresh.transaction().unwrap();
+            tx.execute(
+                "INSERT INTO objects (connection_id, key, name, name_norm, ext, parent, size, last_modified, storage_class, generation)
+                 VALUES ('b', 'x.txt', 'x.txt', 'x.txt', 'txt', '', 1, '2026-01-01T00:00:00Z', 'STANDARD', 1)",
+                [],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        });
     }
 
     #[test]
