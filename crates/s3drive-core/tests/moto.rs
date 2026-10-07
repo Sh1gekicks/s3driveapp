@@ -195,6 +195,23 @@ async fn wait_batch(sink: &MemorySink<BatchEvent>) -> BatchResult {
     panic!("batch job did not finish");
 }
 
+/// インデックスの走査（`job_id`）の完了を待つ。失敗や時間切れはその場でテストを失敗させる。
+async fn wait_index(sink: &MemorySink<IndexEvent>, job_id: &str) -> IndexStatus {
+    for _ in 0..1200 {
+        for event in sink.events() {
+            match event {
+                IndexEvent::Finished { job_id: id, status } if id == job_id => return status,
+                IndexEvent::Failed { job_id: id, error } if id == job_id => {
+                    panic!("index build failed: {error:?}")
+                }
+                _ => {}
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("index build did not finish: {:?}", sink.events());
+}
+
 async fn wait_transfer(core: &Core, job_id: &str) -> TransferJob {
     for _ in 0..1200 {
         if let Some(job) = core
@@ -824,21 +841,13 @@ async fn builds_and_queries_the_search_index() {
     env.put("root.txt", b"r").await;
 
     let sink = Arc::new(MemorySink::default());
-    env.core
+    let job_id = env
+        .core
         .search()
         .rebuild(&env.conn, sink.clone())
         .await
         .unwrap();
-    for _ in 0..200 {
-        if sink
-            .events()
-            .iter()
-            .any(|e| matches!(e, IndexEvent::Finished { .. }))
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_index(&sink, &job_id).await;
     let status = env.core.search().status(&env.conn).await.unwrap();
     assert_eq!(status.state, IndexState::Ready);
     assert_eq!(status.object_count, 3);
@@ -892,21 +901,13 @@ async fn builds_and_queries_the_search_index() {
         .await
         .unwrap();
     let sink = Arc::new(MemorySink::default());
-    env.core
+    let job_id = env
+        .core
         .search()
         .rebuild(&env.conn, sink.clone())
         .await
         .unwrap();
-    for _ in 0..200 {
-        if sink
-            .events()
-            .iter()
-            .any(|e| matches!(e, IndexEvent::Finished { .. }))
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_index(&sink, &job_id).await;
     assert!(
         env.core
             .search()
@@ -919,6 +920,24 @@ async fn builds_and_queries_the_search_index() {
     let metrics = env.core.metrics_storage(&env.conn, true).await.unwrap();
     assert_eq!(metrics.source, MetricsSource::Index);
     assert_eq!(metrics.object_count, Some(1));
+
+    // 背景の走査中に再構築を求めると、そのジョブに加わり、完了がこちらの通知先にも届く
+    env.core.search().delete(&env.conn).await.unwrap();
+    env.core
+        .search()
+        .query(&env.conn, SearchQuery::text("report"))
+        .await
+        .unwrap();
+    let sink = Arc::new(MemorySink::default());
+    let job_id = env
+        .core
+        .search()
+        .rebuild(&env.conn, sink.clone())
+        .await
+        .unwrap();
+    let status = wait_index(&sink, &job_id).await;
+    assert_eq!(status.state, IndexState::Ready);
+    assert_eq!(status.object_count, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

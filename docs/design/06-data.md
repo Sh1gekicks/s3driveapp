@@ -114,6 +114,7 @@ Tauri に依存しないよう `s3drive-core` の `SettingsStore` で読み書�
 ### 4.1 共通設定
 
 - ファイルは `s3drive.db`。WAL モード、`foreign_keys=ON`、`busy_timeout=5000`。
+- トランザクションは書き込み用に限り、`BEGIN IMMEDIATE` で始める（既定の DEFERRED では、読み取りから書き込みに移るときに他の接続が書き込み中だと、待たずに `SQLITE_BUSY` になるため）。
 - rusqlite の `bundled` 機能で SQLite を同梱する（FTS5 を使うため）。
 - コネクションプール（r2d2）から取得し、`spawn_blocking` 上で実行する。
 

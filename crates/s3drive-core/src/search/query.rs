@@ -276,7 +276,7 @@ impl SearchService<'_> {
         super::status(&self.core.0.db, connection_id, auto, progress).await
     }
 
-    /// 全件走査をやり直す（設定「再構築」）。走査中なら実行中のジョブの ID を返す。
+    /// 全件走査をやり直す（設定「再構築」）。走査中なら実行中のジョブの ID を返し、その進捗と結果を `sink` にも通知する。
     pub async fn rebuild(
         &self,
         connection_id: &str,

@@ -304,7 +304,7 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 |---|---|---|---|
 | `search_query` | `connectionId`、`query: SearchQuery` | `SearchResult` | [04 §10](04-features.md#10-検索フィルタ) |
 | `search_index_status` | `connectionId` | `IndexStatus` | |
-| `search_index_rebuild` | `connectionId`、`onEvent: Channel<IndexEvent>` | `JobId` | 全件走査 |
+| `search_index_rebuild` | `connectionId`、`onEvent: Channel<IndexEvent>` | `JobId` | 全件走査。走査中なら実行中のジョブの ID を返し、その進捗と完了を `onEvent` にも送る |
 | `search_index_delete` | `connectionId` | — | インデックスの削除 |
 
 ### 3.7 メトリクス・コスト
