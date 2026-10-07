@@ -32,8 +32,27 @@ pub struct IndexBuilds {
     running: std::sync::Mutex<std::collections::HashMap<String, RunningBuild>>,
 }
 
-/// 走査中のジョブ（ジョブ ID、走査済み件数、キャンセル）。
-type RunningBuild = (JobId, Arc<AtomicU64>, CancellationToken);
+/// 走査中のジョブ（ジョブ ID、走査済み件数、キャンセル、通知先）。
+type RunningBuild = (JobId, Arc<AtomicU64>, CancellationToken, Arc<BuildSinks>);
+
+/// 走査中のジョブの通知先。走査中に再構築を求められたら、その通知先も加える。
+#[derive(Default)]
+struct BuildSinks(std::sync::Mutex<Vec<Arc<dyn ProgressSink<IndexEvent>>>>);
+
+impl BuildSinks {
+    fn add(&self, sink: Arc<dyn ProgressSink<IndexEvent>>) {
+        self.0.lock().unwrap().push(sink);
+    }
+}
+
+impl ProgressSink<IndexEvent> for BuildSinks {
+    fn send(&self, event: IndexEvent) {
+        let sinks = self.0.lock().unwrap().clone();
+        for sink in sinks {
+            sink.send(event.clone());
+        }
+    }
+}
 
 /// インデックスの更新完了を通知する先（`index://updated` イベント）。
 pub type IndexListener = dyn Fn(&str, &IndexStatus) + Send + Sync;
@@ -55,11 +74,11 @@ impl<'a> IndexRunner<'a> {
             .lock()
             .unwrap()
             .get(connection_id)
-            .map(|(_, n, _)| n.load(Ordering::Relaxed))
+            .map(|(_, n, _, _)| n.load(Ordering::Relaxed))
     }
 
     pub fn cancel(&self, connection_id: &str) {
-        if let Some((_, _, token)) = self
+        if let Some((_, _, token, _)) = self
             .core
             .0
             .index_builds
@@ -72,11 +91,13 @@ impl<'a> IndexRunner<'a> {
         }
     }
 
-    /// 走査を始める。すでに走査中ならそのジョブ ID を返す。
+    /// 走査を始める。すでに走査中なら、そのジョブの以降の進捗と結果を `sink` にも通知し、そのジョブ ID を返す。
     pub fn start(&self, ctx: Arc<ConnCtx>, sink: Arc<dyn ProgressSink<IndexEvent>>) -> JobId {
         let connection_id = ctx.id.clone();
         let mut running = self.core.0.index_builds.running.lock().unwrap();
-        if let Some((job_id, _, _)) = running.get(&connection_id) {
+        if let Some((job_id, _, _, sinks)) = running.get(&connection_id) {
+            // 完了の通知は `running` から取り除いた後に送るため、ここで加えた通知先にも届く
+            sinks.add(sink);
             return job_id.clone();
         }
         let (job_id, cancel) = self
@@ -84,40 +105,49 @@ impl<'a> IndexRunner<'a> {
             .jobs()
             .register(JobKind::IndexBuild, Some(&connection_id));
         let scanned = Arc::new(AtomicU64::new(0));
+        let sinks = Arc::new(BuildSinks::default());
+        sinks.add(sink);
         running.insert(
             connection_id.clone(),
-            (job_id.clone(), scanned.clone(), cancel.clone()),
+            (
+                job_id.clone(),
+                scanned.clone(),
+                cancel.clone(),
+                sinks.clone(),
+            ),
         );
         drop(running);
 
         let core = self.core.clone();
         let id = job_id.clone();
         tokio::spawn(async move {
-            let result = build(&core.0.db, &ctx, &id, scanned, &cancel, sink.as_ref()).await;
+            let result = build(&core.0.db, &ctx, &id, scanned, &cancel, sinks.as_ref()).await;
             core.0.index_builds.running.lock().unwrap().remove(&ctx.id);
             core.jobs().finish(&id);
             let auto = core
                 .0
                 .settings
                 .read(|f| f.settings.search.auto_refresh_minutes);
+            // 状態を読めなかったときも失敗として通知する（通知先が完了を待ち続けないように）
+            let result = match result {
+                Ok(()) => super::status(&core.0.db, &ctx.id, auto, None).await,
+                Err(e) => Err(e),
+            };
             match result {
-                Ok(()) => {
-                    let status = super::status(&core.0.db, &ctx.id, auto, None).await;
-                    if let Ok(status) = status {
-                        sink.send(IndexEvent::Finished {
-                            job_id: id.clone(),
-                            status: status.clone(),
-                        });
-                        if let Some(listener) = core.0.index_listener.lock().unwrap().as_ref() {
-                            listener(&ctx.id, &status);
-                        }
+                Ok(status) => {
+                    sinks.send(IndexEvent::Finished {
+                        job_id: id.clone(),
+                        status: status.clone(),
+                    });
+                    if let Some(listener) = core.0.index_listener.lock().unwrap().as_ref() {
+                        listener(&ctx.id, &status);
                     }
                 }
                 Err(e) => {
                     if !e.is_canceled() {
                         log::warn!("インデックスを作成できませんでした: {e}");
                     }
-                    sink.send(IndexEvent::Failed {
+                    sinks.send(IndexEvent::Failed {
                         job_id: id,
                         error: e.into(),
                     });
