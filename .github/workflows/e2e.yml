@@ -33,6 +33,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # ランナーの python3 は版が上がることがあり、moto の依存（pydantic-core）の wheel がまだない版だと
+      # ソースからのビルドに失敗する（3.15 で発生）。wheel のそろっている版に固定する
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
 
       # macOS のランナーには Docker がないため、moto はサーバーとして直接起動する（docker-compose.test.yml と同じ版）
       - name: moto の起動とバケットの作成
