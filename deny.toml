@@ -19,6 +19,14 @@ ignore = [
   # rsa（openidconnect 経由）の Marvin Attack。修正版は未公開。影響するのは秘密鍵での復号・署名の処理時間だが、
   # このアプリは Google の ID トークンの署名を公開鍵で検証するだけで、秘密鍵の操作を行わない
   { id = "RUSTSEC-2023-0071", reason = "rsa は公開鍵による署名検証のみに使い、秘密鍵の操作がないため影響しない" },
+  # crypto-bigint 0.5 の定数時間でない演算（タイミングのサイドチャネル）。修正版は 0.7.6 以降だが、
+  # 依存元の aws-sigv4（sigv4a 機能）と elliptic-curve 0.13（openidconnect の p256／p384 経由）が 0.5 のため更新できない
+  # （2026-10 時点の最新: aws-sigv4 1.6.3、openidconnect 4.0.1）。
+  # openidconnect は ID トークンの署名を公開鍵で検証するだけで、秘密の値を扱わない。
+  # aws-sigv4 はシークレットキーからの SigV4a の鍵の導出に使うが、SigV4a はマルチリージョンアクセスポイントへの
+  # 要求でだけ使われ、悪用には利用者の Mac 上で処理時間を観測する必要がある。
+  # aws-sigv4 と openidconnect が crypto-bigint 0.7 に移ったら更新し、この例外を外す
+  { id = "RUSTSEC-2026-0387", reason = "秘密の値に関わるのは SigV4a の鍵の導出だけで、悪用には利用者の端末上での観測が必要なため。修正版を使う aws-sigv4・openidconnect の公開を待つ" },
 ]
 
 [licenses]

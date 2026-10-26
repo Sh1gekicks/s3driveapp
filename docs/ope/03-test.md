@@ -217,7 +217,7 @@ pnpm e2e
   ```
 
 - アプリのコードを変更したら、`pnpm e2e:build` からやり直す。
-- Docker を使わない場合は、CI と同じく Python で moto のサーバーを起動してもよい（`pip install 'moto[server]==5.1.22'` のあと `moto_server -H 127.0.0.1 -p 5000`）。
+- Docker を使わない場合は、CI と同じく Python（3.13）で moto のサーバーを起動してもよい（`pip install 'moto[server]==5.1.22'` のあと `moto_server -H 127.0.0.1 -p 5000`）。
 
 ### 2.6 依存の検査
 
@@ -281,7 +281,7 @@ PR で実行する場合は、PR に `e2e` ラベルを付ける。
 gh pr edit <PR 番号> --add-label e2e
 ```
 
-- ランナーには Docker がないため、moto は Python の仮想環境にインストールしてサーバーとして起動し、バケットを作成してから実行する。
+- ランナーには Docker がないため、moto は Python の仮想環境にインストールしてサーバーとして起動し、バケットを作成してから実行する。Python は 3.13 に固定している（ランナーの標準の python3 が 3.15 に上がったときのように、moto の依存（pydantic-core）の wheel がない版になると、ソースからのビルドに失敗するため）。
 - タイムアウトは 60 分。
 - 失敗した場合は、実行結果の成果物 `e2e-logs` に、失敗したシナリオのスクリーンショット（`e2e/.artifacts/`）、moto のログ、アプリのログが保存される。
 
