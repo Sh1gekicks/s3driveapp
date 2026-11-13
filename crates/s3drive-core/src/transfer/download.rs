@@ -12,9 +12,10 @@ use super::multipart::{DOWNLOAD_RANGE_SIZE, RANGED_DOWNLOAD_THRESHOLD, part_rang
 use super::{FileWork, JobState, with_retry};
 use crate::Core;
 use crate::aws::error_map::{self, Ctx};
+use crate::connections::ConnCtx;
 use crate::error::{CoreError, CoreResult, ErrorCode};
 use crate::model::{DownloadDestination, JobId, Target, TransferKind};
-use crate::objects::{head, list_recursive};
+use crate::objects::{HeadInfo, head, list_recursive};
 use crate::util::{key, time};
 
 const TEMP_SUFFIX: &str = ".s3drive-download";
@@ -107,6 +108,24 @@ pub fn version_file_name(name: &str, last_modified: &str) -> String {
     format!("{stem} ({stamp}){ext}")
 }
 
+/// 選択したファイル（フォルダと、保存先に使えない名前のものを除く）のメタデータを、選択の順に返す。
+/// 並列に取得する（1 件ずつでは、件数が多いと転送が始まるまで待たされる）。
+async fn head_selected(ctx: &Arc<ConnCtx>, targets: &[Target]) -> CoreResult<Vec<HeadInfo>> {
+    let to_head: Vec<(String, Option<String>)> = targets
+        .iter()
+        .filter(|t| !t.is_folder && key::is_safe_local_name(&key::nfc(key::base_name(&t.key))))
+        .map(|t| (t.key.clone(), t.version_id.clone()))
+        .collect();
+    stream::iter(to_head)
+        .map(|(object_key, version_id)| {
+            let ctx = ctx.clone();
+            async move { head(&ctx, &object_key, version_id.as_deref()).await }
+        })
+        .buffered(HEAD_CONCURRENCY)
+        .try_collect()
+        .await
+}
+
 impl Core {
     /// ダウンロードの開始（04 §5.2）。取り出していないアーカイブは `INVALID_OBJECT_STATE`（DLG-07 を表示する）。
     pub async fn download_start(
@@ -134,20 +153,7 @@ impl Core {
         for t in &targets {
             key::validate_key(&t.key)?;
         }
-        // 選択したファイルのメタデータは並列に取得する（1 件ずつでは、件数が多いと転送が始まるまで待たされる）
-        let to_head: Vec<(String, Option<String>)> = targets
-            .iter()
-            .filter(|t| !t.is_folder && key::is_safe_local_name(&key::nfc(key::base_name(&t.key))))
-            .map(|t| (t.key.clone(), t.version_id.clone()))
-            .collect();
-        let heads: Vec<_> = stream::iter(to_head)
-            .map(|(object_key, version_id)| {
-                let ctx = ctx.clone();
-                async move { head(&ctx, &object_key, version_id.as_deref()).await }
-            })
-            .buffered(HEAD_CONCURRENCY)
-            .try_collect()
-            .await?;
+        let heads = head_selected(&ctx, &targets).await?;
         let mut heads = heads.into_iter();
         let mut files = Vec::new();
         for t in &targets {
@@ -219,7 +225,7 @@ impl Core {
         }
         // 開始前に空き容量を確認する（04 §5.4）
         let total: u64 = files.iter().map(|f| f.size).sum();
-        std::fs::create_dir_all(&dir).map_err(|e| {
+        tokio::fs::create_dir_all(&dir).await.map_err(|e| {
             CoreError::with_message(ErrorCode::LocalIo, "保存先に書き込めません")
                 .detail(e.to_string())
         })?;

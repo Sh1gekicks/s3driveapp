@@ -190,17 +190,7 @@ pub fn expand_selection(
                 continue;
             }
             if entry.file_type().is_dir() {
-                // 除外するファイル（.DS_Store など）しかないフォルダも、空のフォルダとして作る。
-                // 中身がすべて除外されると、フォルダそのものがアップロード先に現れなくなるため
-                let empty = std::fs::read_dir(path)
-                    .map(|d| {
-                        d.flatten().all(|child| {
-                            let child_name = key::nfc(&child.file_name().to_string_lossy());
-                            child.file_type().is_ok_and(|t| t.is_file())
-                                && ignore.iter().any(|i| i == &child_name)
-                        })
-                    })
-                    .unwrap_or(false);
+                let empty = has_nothing_to_upload(path, ignore);
                 if empty {
                     match to_key(rel, true) {
                         Ok(k) => files.push((path.to_path_buf(), k, 0, None, true)),
@@ -222,6 +212,18 @@ pub fn expand_selection(
         }
     }
     (files, excluded)
+}
+
+/// フォルダが空か。除外するファイル（.DS_Store など）しかないフォルダも、空のフォルダとして扱う
+/// （中身がすべて除外されると、フォルダそのものがアップロード先に現れなくなるため）。
+fn has_nothing_to_upload(dir: &Path, ignore: &[String]) -> bool {
+    let Ok(children) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    children.flatten().all(|child| {
+        let name = key::nfc(&child.file_name().to_string_lossy());
+        child.file_type().is_ok_and(|t| t.is_file()) && ignore.iter().any(|i| i == &name)
+    })
 }
 
 /// アップロード先のフォルダの中身（キー → サイズ・更新日時）と名前の一覧。
