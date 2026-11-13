@@ -31,10 +31,10 @@ aws-smithy-runtime-api = "1"
 aws-types = "1"
 
 # 永続化
-rusqlite = { version = "0.40", features = ["bundled", "collation"] }
+rusqlite = { version = "0.41", features = ["bundled", "collation"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.35"
-rusqlite_migration = "2.6"
+r2d2_sqlite = "0.36"
+rusqlite_migration = "2.7"
 
 # シリアライズ・型共有
 serde = { version = "1", features = ["derive"] }
