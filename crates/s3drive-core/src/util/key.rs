@@ -98,6 +98,26 @@ pub fn parent_prefix(key: &str) -> &str {
     }
 }
 
+/// `prefix` で始まるキーの範囲の上端（`prefix <= key < 上端` が `prefix` 配下のキー）。
+///
+/// 末尾の文字を次の文字に進めた文字列を返す（`a/b/` → `a/b0`）。UTF-8 のバイト順はコードポイント順と同じ
+/// なので、SQLite の既定（BINARY）の比較でもそのまま範囲になる。上端がない場合（空文字など）は `None`。
+pub fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        // サロゲートの範囲（U+D800〜U+DFFF）は文字にならないため飛ばす
+        let next = match last as u32 + 1 {
+            0xD800 => Some('\u{E000}'),
+            n => char::from_u32(n),
+        };
+        if let Some(next) = next {
+            chars.push(next);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
+}
+
 /// 最後の階層の名前（`a/b/` → `b`、`a/c.txt` → `c.txt`）。
 pub fn base_name(key: &str) -> &str {
     let trimmed = key.strip_suffix('/').unwrap_or(key);
@@ -211,6 +231,26 @@ pub fn is_valid_bucket_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounds_the_keys_under_a_prefix() {
+        assert_eq!(prefix_upper_bound("a/b/").as_deref(), Some("a/b0"));
+        assert_eq!(prefix_upper_bound("資料/").as_deref(), Some("資料0"));
+        assert_eq!(prefix_upper_bound(""), None);
+        // 進められない文字は 1 つ前の文字を進める
+        assert_eq!(prefix_upper_bound("a\u{10FFFF}").as_deref(), Some("b"));
+        assert_eq!(prefix_upper_bound("\u{D7FF}").as_deref(), Some("\u{E000}"));
+        let upper = prefix_upper_bound("a/b/").unwrap();
+        for inside in ["a/b/", "a/b/c.txt", "a/b/\u{10FFFF}", "a/b/日本.txt"] {
+            assert!("a/b/" <= inside && inside < upper.as_str(), "{inside}");
+        }
+        for outside in ["a/b", "a/b0", "a/c/", "a/a/z"] {
+            assert!(
+                !("a/b/" <= outside && outside < upper.as_str()),
+                "{outside}"
+            );
+        }
+    }
 
     #[test]
     fn nfc_composes_decomposed_names() {

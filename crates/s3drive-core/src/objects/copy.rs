@@ -1,9 +1,12 @@
 //! オブジェクトのコピー（移動・クラス変更・バージョン復元に使う。D6）。
 
+use std::time::Duration;
+
 use aws_sdk_s3::types::{
     CompletedMultipartUpload, CompletedPart, MetadataDirective, ServerSideEncryption,
     TaggingDirective,
 };
+use aws_smithy_types::timeout::TimeoutConfig;
 use futures::{StreamExt, stream};
 
 use super::HeadInfo;
@@ -17,6 +20,23 @@ use crate::util::key;
 pub const MULTIPART_COPY_THRESHOLD: u64 = 5 * 1024 * 1024 * 1024;
 /// マルチパートコピーのパートサイズ。
 const COPY_PART_SIZE: u64 = 512 * 1024 * 1024;
+
+/// サーバー側のコピー（`CopyObject`・`UploadPartCopy`）の 1 回の試行の上限。
+///
+/// 単発の API の 30 秒（01 §6.1）では、数 GB のオブジェクトのコピーが終わる前に打ち切られうる
+/// （S3 はコピーが終わるまで応答を返さない）。本文の送受信がなく停止ストリーム保護も効かないため、
+/// 無制限にはせず長めの上限を置く。
+const COPY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// コピーの要求にだけ使うタイムアウトの設定（クライアントの設定を要求ごとに上書きする）。
+fn copy_timeouts() -> aws_sdk_s3::config::Builder {
+    aws_sdk_s3::config::Config::builder().timeout_config(
+        TimeoutConfig::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .operation_attempt_timeout(COPY_ATTEMPT_TIMEOUT)
+            .build(),
+    )
+}
 
 /// コピーの指定。
 pub(crate) struct CopySpec<'a> {
@@ -54,7 +74,9 @@ pub(crate) async fn copy(ctx: &ConnCtx, spec: CopySpec<'_>) -> CoreResult<()> {
             .server_side_encryption(ServerSideEncryption::AwsKms)
             .ssekms_key_id(kms);
     }
-    req.send()
+    req.customize()
+        .config_override(copy_timeouts())
+        .send()
         .await
         .map_err(|e| error_map::classify(&e, Ctx::Op("s3:PutObject")))?;
     Ok(())
@@ -138,6 +160,8 @@ async fn multipart_copy(ctx: &ConnCtx, spec: CopySpec<'_>) -> CoreResult<()> {
                     .part_number((i + 1) as i32)
                     .copy_source(source)
                     .copy_source_range(format!("bytes={start}-{end}"))
+                    .customize()
+                    .config_override(copy_timeouts())
                     .send()
                     .await
                     .map_err(|e| error_map::classify(&e, Ctx::Op("s3:PutObject")))?;

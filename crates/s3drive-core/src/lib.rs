@@ -51,6 +51,8 @@ pub(crate) struct CoreInner {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) db: Db,
     pub(crate) clients: Mutex<HashMap<ConnectionId, Arc<ConnCtx>>>,
+    /// 接続のクライアントを同時に重複して作らないための排他（`Core::ctx`）。
+    pub(crate) client_build: tokio::sync::Mutex<()>,
     pub(crate) jobs: JobRegistry,
     pub(crate) selections: SelectionRegistry,
     pub(crate) auth: Arc<dyn AuthProvider>,
@@ -87,6 +89,7 @@ impl Core {
             transfers: TransferManager::new(db.clone()),
             db,
             clients: Mutex::new(HashMap::new()),
+            client_build: tokio::sync::Mutex::new(()),
             jobs: JobRegistry::new(),
             selections: SelectionRegistry::new(),
             auth: config.auth,

@@ -9,7 +9,10 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::error::{CoreError, CoreResult};
 
-const MIGRATIONS: &[M<'static>] = &[M::up(include_str!("migrations.sql"))];
+const MIGRATIONS: &[M<'static>] = &[
+    M::up(include_str!("migrations.sql")),
+    M::up(include_str!("migrations_002.sql")),
+];
 
 #[derive(Clone)]
 pub struct Db {
@@ -205,6 +208,42 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn overwriting_a_row_keeps_the_name_searchable_without_rewriting_fts() {
+        let (db, _dir) = Db::open_temp().unwrap();
+        let (hits, trigger) = db
+            .run(|c| {
+                // 再走査は、同じキーの行を同じ名前で上書きする
+                for generation in [1, 2] {
+                    c.execute(
+                        "INSERT INTO objects (connection_id, key, name, name_norm, ext, parent, size, last_modified, storage_class, generation)
+                         VALUES ('c', 'a/report-q3.pdf', 'report-q3.pdf', 'report-q3.pdf', 'pdf', 'a/', 1, '2026-01-01T00:00:00Z', 'STANDARD', ?1)
+                         ON CONFLICT (connection_id, key) DO UPDATE SET name_norm = excluded.name_norm, generation = excluded.generation",
+                        [generation],
+                    )?;
+                }
+                let hits: i64 = c.query_row(
+                    "SELECT count(*) FROM objects_fts WHERE objects_fts MATCH '\"port\"'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let trigger: String = c.query_row(
+                    "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'objects_au'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok((hits, trigger))
+            })
+            .await
+            .unwrap();
+        assert_eq!(hits, 1);
+        // 名前が変わらない更新では FTS を書き直さない（版 2 のマイグレーション）
+        assert!(
+            trigger.contains("WHEN old.name_norm <> new.name_norm"),
+            "{trigger}"
+        );
     }
 
     #[test]

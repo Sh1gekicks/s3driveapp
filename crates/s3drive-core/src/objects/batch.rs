@@ -34,6 +34,8 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 type VersionedKey = (String, Option<String>);
 /// （キー、エラー）。
 type KeyError = (String, CoreError);
+/// 1 件の移動・クラス変更の結果。処理した場合は元のオブジェクトの情報、スキップした場合は理由。
+type ItemOutcome = CoreResult<Result<Listed, &'static str>>;
 
 /// 間引いて進捗を送る（1 ジョブあたり最大 10 回/秒）。
 pub(crate) struct BatchProgressEmitter {
@@ -291,47 +293,54 @@ impl ObjectService<'_> {
             connection_id,
             sink,
             move |progress, cancel| async move {
-                let mut objects: Vec<Listed> = Vec::new();
+                // （キー、列挙で得た情報）。選択したファイルは、並列の処理の中で HeadObject する
+                // （ここで 1 件ずつ取得すると、件数が多いときに処理が始まるまで待たされる）
+                let mut objects: Vec<(String, Option<Listed>)> = Vec::new();
                 for t in &targets {
                     check_cancel(&cancel)?;
                     if t.is_folder {
                         let (items, _) = list_recursive(&ctx, &t.key, usize::MAX).await?;
                         // フォルダマーカーは除外する
-                        objects.extend(items.into_iter().filter(|o| !key::is_folder_key(&o.key)));
+                        objects.extend(
+                            items
+                                .into_iter()
+                                .filter(|o| !key::is_folder_key(&o.key))
+                                .map(|o| (o.key.clone(), Some(o))),
+                        );
                     } else {
-                        objects.push(head(&ctx, &t.key, None).await?.to_listed(&t.key));
+                        objects.push((t.key.clone(), None));
                     }
                 }
                 progress.set_total(objects.len() as u64);
-                let outcomes: Vec<(Listed, CoreResult<Option<&'static str>>)> =
-                    stream::iter(objects)
-                        .map(|o| {
-                            let ctx = ctx.clone();
-                            let cancel = cancel.clone();
-                            let progress = progress.clone();
-                            async move {
-                                let r = change_one(&ctx, &o, storage_class, &cancel).await;
-                                progress.advance(1);
-                                (o, r)
-                            }
-                        })
-                        .buffer_unordered(BATCH_CONCURRENCY)
-                        .collect()
-                        .await;
+                let outcomes: Vec<(String, ItemOutcome)> = stream::iter(objects)
+                    .map(|(k, listed)| {
+                        let ctx = ctx.clone();
+                        let cancel = cancel.clone();
+                        let progress = progress.clone();
+                        async move {
+                            let r =
+                                change_one(&ctx, &k, listed.as_ref(), storage_class, &cancel).await;
+                            progress.advance(1);
+                            (k, r)
+                        }
+                    })
+                    .buffer_unordered(BATCH_CONCURRENCY)
+                    .collect()
+                    .await;
                 let mut result = BatchResult::default();
                 let mut changed = Vec::new();
-                for (o, r) in outcomes {
+                for (k, r) in outcomes {
                     match r {
-                        Ok(None) => {
+                        Ok(Ok(source)) => {
                             result.succeeded += 1;
                             changed.push(IndexedObject {
                                 storage_class,
-                                ..o.to_indexed()
+                                ..source.to_indexed()
                             });
                         }
-                        Ok(Some(reason)) => result.skip(&o.key, reason),
-                        Err(e) if e.is_canceled() => result.skip(&o.key, "キャンセルしました"),
-                        Err(e) => result.fail(&o.key, e),
+                        Ok(Err(reason)) => result.skip(&k, reason),
+                        Err(e) if e.is_canceled() => result.skip(&k, "キャンセルしました"),
+                        Err(e) => result.fail(&k, e),
                     }
                 }
                 search::upsert(&core.0.db, &cid, changed).await?;
@@ -341,36 +350,37 @@ impl ObjectService<'_> {
     }
 }
 
-/// 変更した場合は `None`、スキップした場合は理由を返す。
+/// 1 件のクラスを変更する。`listed` は列挙で得た情報（あれば、HeadObject の前に対象外を除く）。
 async fn change_one(
     ctx: &ConnCtx,
-    listed: &Listed,
+    object_key: &str,
+    listed: Option<&Listed>,
     class: StorageClass,
     cancel: &CancellationToken,
-) -> CoreResult<Option<&'static str>> {
+) -> ItemOutcome {
     check_cancel(cancel)?;
-    if listed.storage_class == class {
-        return Ok(Some("すでに同じストレージクラスです"));
+    if listed.is_some_and(|l| l.storage_class == class) {
+        return Ok(Err("すでに同じストレージクラスです"));
     }
-    let source = head(ctx, &listed.key, None).await?;
+    let source = head(ctx, object_key, None).await?;
     if source.restore.needs_restore() {
-        return Ok(Some("取り出しが必要なため変更できません"));
+        return Ok(Err("取り出しが必要なため変更できません"));
     }
     if source.storage_class == class {
-        return Ok(Some("すでに同じストレージクラスです"));
+        return Ok(Err("すでに同じストレージクラスです"));
     }
     copy::copy(
         ctx,
         CopySpec {
-            src_key: &listed.key,
+            src_key: object_key,
             src_version: None,
-            dest_key: &listed.key,
+            dest_key: object_key,
             storage_class: class,
             source: &source,
         },
     )
     .await?;
-    Ok(None)
+    Ok(Ok(source.to_listed(object_key)))
 }
 
 /// 「name (n)」形式で、移動先に存在しない名前を探す。
@@ -403,32 +413,32 @@ async fn relocate(
     progress: &Arc<BatchProgressEmitter>,
     cancel: &CancellationToken,
 ) -> CoreResult<BatchResult> {
-    let mut plan: Vec<(Listed, String)> = Vec::new();
+    // （キー、列挙で得た情報、移動先）。選択したファイルは、並列の処理の中で HeadObject する
+    let mut plan: Vec<(String, Option<Listed>, String)> = Vec::new();
     for (root, new_root) in roots {
         check_cancel(cancel)?;
-        let objects: Vec<Listed> = if root.is_folder {
-            list_recursive(ctx, &root.key, usize::MAX).await?.0
-        } else {
-            vec![head(ctx, &root.key, None).await?.to_listed(&root.key)]
-        };
-        for o in objects {
+        if !root.is_folder {
+            plan.push((root.key, None, new_root));
+            continue;
+        }
+        for o in list_recursive(ctx, &root.key, usize::MAX).await?.0 {
             if let Some(rest) = o.key.strip_prefix(root.key.as_str()) {
                 let dest = format!("{new_root}{rest}");
-                plan.push((o, dest));
+                plan.push((o.key.clone(), Some(o), dest));
             }
         }
     }
     progress.set_total(plan.len() as u64);
 
-    let outcomes: Vec<(Listed, String, CoreResult<Option<&'static str>>)> = stream::iter(plan)
-        .map(|(o, dest)| {
+    let outcomes: Vec<(String, String, ItemOutcome)> = stream::iter(plan)
+        .map(|(k, listed, dest)| {
             let ctx = ctx.clone();
             let cancel = cancel.clone();
             let progress = progress.clone();
             async move {
-                let r = relocate_one(&ctx, &o, &dest, &cancel).await;
+                let r = relocate_one(&ctx, &k, listed.as_ref(), &dest, &cancel).await;
                 progress.advance(1);
-                (o, dest, r)
+                (k, dest, r)
             }
         })
         .buffer_unordered(BATCH_CONCURRENCY)
@@ -438,19 +448,19 @@ async fn relocate(
     let mut result = BatchResult::default();
     let mut removed = Vec::new();
     let mut added = Vec::new();
-    for (o, dest, r) in outcomes {
+    for (k, dest, r) in outcomes {
         match r {
-            Ok(None) => {
+            Ok(Ok(source)) => {
                 result.succeeded += 1;
-                removed.push(o.key.clone());
                 added.push(IndexedObject {
                     key: dest,
-                    ..o.to_indexed()
+                    ..source.to_indexed()
                 });
+                removed.push(k);
             }
-            Ok(Some(reason)) => result.skip(&o.key, reason),
-            Err(e) if e.is_canceled() => result.skip(&o.key, "キャンセルしました"),
-            Err(e) => result.fail(&o.key, e),
+            Ok(Err(reason)) => result.skip(&k, reason),
+            Err(e) if e.is_canceled() => result.skip(&k, "キャンセルしました"),
+            Err(e) => result.fail(&k, e),
         }
     }
     search::remove(&core.0.db, connection_id, removed).await?;
@@ -458,25 +468,27 @@ async fn relocate(
     Ok(result)
 }
 
+/// 1 件を移動する。`listed` は列挙で得た情報（あれば、HeadObject の前に対象外を除く）。
 async fn relocate_one(
     ctx: &ConnCtx,
-    listed: &Listed,
+    object_key: &str,
+    listed: Option<&Listed>,
     dest: &str,
     cancel: &CancellationToken,
-) -> CoreResult<Option<&'static str>> {
+) -> ItemOutcome {
     check_cancel(cancel)?;
     key::validate_key(dest)?;
-    if listed.restore.needs_restore() {
-        return Ok(Some("取り出されていないアーカイブのため移動できません"));
+    if listed.is_some_and(|l| l.restore.needs_restore()) {
+        return Ok(Err("取り出されていないアーカイブのため移動できません"));
     }
-    let source = head(ctx, &listed.key, None).await?;
+    let source = head(ctx, object_key, None).await?;
     if source.restore.needs_restore() {
-        return Ok(Some("取り出されていないアーカイブのため移動できません"));
+        return Ok(Err("取り出されていないアーカイブのため移動できません"));
     }
     copy::copy(
         ctx,
         CopySpec {
-            src_key: &listed.key,
+            src_key: object_key,
             src_version: None,
             dest_key: dest,
             storage_class: source.storage_class,
@@ -492,11 +504,11 @@ async fn relocate_one(
         .s3_bulk
         .delete_object()
         .bucket(&ctx.bucket)
-        .key(&listed.key)
+        .key(object_key)
         .send()
         .await
         .map_err(|e| error_map::classify(&e, Ctx::Op("s3:DeleteObject")))?;
-    Ok(None)
+    Ok(Ok(source.to_listed(object_key)))
 }
 
 async fn delete_job(
@@ -750,6 +762,73 @@ mod tests {
         assert_eq!(result.failed[0].error.code, ErrorCode::AccessDenied);
         // 必要な権限を示す（04 §6.3）
         assert!(result.failed[0].error.message.contains("s3:DeleteObject"));
+    }
+
+    #[tokio::test]
+    async fn moves_selected_files_without_a_separate_metadata_pass() {
+        use aws_sdk_s3::operation::copy_object::CopyObjectOutput;
+        use aws_sdk_s3::operation::delete_object::DeleteObjectOutput;
+        use aws_sdk_s3::operation::head_object::HeadObjectOutput;
+        use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
+        use aws_smithy_mocks::{RuleMode, mock, mock_client};
+        use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+        use aws_smithy_runtime_api::http::StatusCode;
+        use aws_smithy_types::body::SdkBody;
+
+        // 移動先に同名の項目はない
+        let list = mock!(aws_sdk_s3::Client::list_objects_v2)
+            .then_output(|| ListObjectsV2Output::builder().build());
+        let missing = mock!(aws_sdk_s3::Client::head_object)
+            .match_requests(|r| r.key() == Some("a/gone.txt"))
+            .then_http_response(|| {
+                HttpResponse::new(StatusCode::try_from(404).unwrap(), SdkBody::empty())
+            });
+        let head = mock!(aws_sdk_s3::Client::head_object).then_output(|| {
+            HeadObjectOutput::builder()
+                .content_length(3)
+                .e_tag("\"e\"")
+                .last_modified(aws_smithy_types::DateTime::from_secs(1_790_000_000))
+                .build()
+        });
+        let copy = mock!(aws_sdk_s3::Client::copy_object)
+            .match_requests(|r| r.key() == Some("b/x.txt") && r.copy_source() == Some("b/a/x.txt"))
+            .then_output(|| CopyObjectOutput::builder().build());
+        let delete = mock!(aws_sdk_s3::Client::delete_object)
+            .match_requests(|r| r.key() == Some("a/x.txt"))
+            .then_output(|| DeleteObjectOutput::builder().build());
+        let s3 = mock_client!(
+            aws_sdk_s3,
+            RuleMode::MatchAny,
+            [&list, &missing, &head, &copy, &delete]
+        );
+        let (core, _dir) = Core::for_tests(None).unwrap();
+        core.with_test_connection(crate::connections::ConnCtx::for_tests("k1", "b", s3))
+            .await;
+        let sink = Arc::new(MemorySink::<BatchEvent>::default());
+        core.objects()
+            .move_objects(
+                "k1",
+                vec![Target::file("a/gone.txt"), Target::file("a/x.txt")],
+                "b/".into(),
+                Decisions::default(),
+                sink.clone(),
+            )
+            .await
+            .unwrap();
+        let result = loop {
+            if let Some(BatchEvent::Finished(f)) = sink.events().into_iter().last() {
+                break f.result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        // なくなっていたファイルはその 1 件だけを失敗にし、ほかは移動する（ジョブ全体を失敗にしない）
+        assert_eq!(result.succeeded, 1);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].key, "a/gone.txt");
+        assert_eq!(result.failed[0].error.code, ErrorCode::NotFound);
+        // 移動元と移動先（サイズの確認）の HeadObject だけで、事前の取得はしない
+        assert_eq!(head.num_calls(), 2);
+        assert_eq!((copy.num_calls(), delete.num_calls()), (1, 1));
     }
 
     #[tokio::test]

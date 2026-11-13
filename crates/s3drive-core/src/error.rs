@@ -95,6 +95,14 @@ impl ErrorCode {
                 | Self::FileChanged
         )
     }
+
+    /// 同じ要求をそのまま繰り返せば解決しうるか（転送のパートの自動再試行の対象。01 §7.2）。
+    ///
+    /// [`Self::retryable`] のうち `PRECONDITION_FAILED` と `FILE_CHANGED` は、対象が変わっているため同じ要求を
+    /// 繰り返しても解決しない（ファイル全体をやり直す・ユーザーが再試行する）ので含めない。
+    pub fn transient(self) -> bool {
+        matches!(self, Self::Network | Self::Timeout | Self::SlowDown)
+    }
 }
 
 /// コア内部のエラー。

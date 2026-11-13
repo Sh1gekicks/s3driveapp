@@ -89,11 +89,14 @@ impl Clients {
             b
         };
         let s3 = aws_sdk_s3::Client::from_conf(s3_base().build());
+        // 指定しない項目は共通設定（試行 30 秒）を引き継ぐため、試行のタイムアウトは明示して無効にする。
+        // 引き継ぐと、8 MiB のパートを 30 秒で送り切れない回線でアップロードが失敗する
         let s3_transfer = aws_sdk_s3::Client::from_conf(
             s3_base()
                 .timeout_config(
                     TimeoutConfig::builder()
                         .connect_timeout(Duration::from_secs(10))
+                        .disable_operation_attempt_timeout()
                         .build(),
                 )
                 .build(),
@@ -124,5 +127,40 @@ impl Clients {
             pricing,
             full_checksums: endpoint_url.is_none(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aws_credential_types::Credentials;
+
+    #[tokio::test]
+    async fn transfer_client_has_no_attempt_timeout() {
+        let credentials =
+            SharedCredentialsProvider::new(Credentials::new("a", "b", None, None, "test"));
+        let config = sdk_config("ap-northeast-1", credentials, None).await;
+        let clients = Clients::new(&config, None, None);
+        let attempt_timeout = |c: &aws_sdk_s3::Client| {
+            c.config()
+                .timeout_config()
+                .and_then(|t| t.operation_attempt_timeout())
+        };
+        // 単発の API は試行 30 秒（01 §6.1）
+        assert_eq!(attempt_timeout(&clients.s3), Some(Duration::from_secs(30)));
+        assert_eq!(
+            attempt_timeout(&clients.s3_bulk),
+            Some(Duration::from_secs(30))
+        );
+        // 転送は本文の送受信に時間がかかるため、試行のタイムアウトを設けない。接続のタイムアウトは残す
+        assert_eq!(attempt_timeout(&clients.s3_transfer), None);
+        assert_eq!(
+            clients
+                .s3_transfer
+                .config()
+                .timeout_config()
+                .and_then(|t| t.connect_timeout()),
+            Some(Duration::from_secs(10))
+        );
     }
 }

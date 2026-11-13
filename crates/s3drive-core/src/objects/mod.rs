@@ -7,6 +7,7 @@ mod restore;
 use std::collections::{BTreeMap, BTreeSet};
 
 use aws_sdk_s3::types::{ChecksumMode, EncodingType, OptionalObjectAttributes};
+use futures::{StreamExt, TryStreamExt, stream};
 
 use crate::Core;
 use crate::aws::error_map::{self, Ctx};
@@ -25,6 +26,8 @@ pub use restore::parse_restore_header;
 
 /// フォルダの集計で列挙する上限（04 §9.3）。
 pub const SUMMARY_LIMIT: usize = 100_000;
+/// 項目ごとの確認（同名の項目・削除済みのフォルダ）で、並列に呼ぶ API の数。
+const LOOKUP_CONCURRENCY: usize = 8;
 /// 削除済みの項目の表示で読む `ListObjectVersions` のページ数の上限。
 const DELETED_SCAN_PAGES: usize = 20;
 
@@ -362,7 +365,7 @@ impl ObjectService<'_> {
             if out.is_truncated() != Some(true) {
                 break;
             }
-            key_marker = out.next_key_marker().map(str::to_string);
+            key_marker = out.next_key_marker().map(crate::versions::next_key_marker);
             version_marker = out.next_version_id_marker().map(str::to_string);
         }
 
@@ -387,30 +390,34 @@ impl ObjectService<'_> {
             });
         }
         let current_keys: BTreeSet<&str> = current.iter().map(Entry::key).collect();
-        for p in version_prefixes
+        let candidates = version_prefixes
             .into_iter()
             .filter(|p| !current_keys.contains(p.as_str()))
-            .take(100)
-        {
-            let out = ctx
-                .clients
-                .s3
-                .list_objects_v2()
-                .bucket(&ctx.bucket)
-                .prefix(&p)
-                .max_keys(1)
-                .send()
-                .await
-                .map_err(|e| error_map::classify(&e, Ctx::Op("s3:ListBucket")))?;
-            if out.key_count().unwrap_or(0) == 0 {
-                entries.push(Entry::Folder {
+            .take(100);
+        // 現行のオブジェクトが残っていないプレフィックスだけを、削除済みのフォルダとして加える
+        let deleted_folders: Vec<Option<Entry>> = stream::iter(candidates)
+            .map(|p| async move {
+                let out = ctx
+                    .clients
+                    .s3
+                    .list_objects_v2()
+                    .bucket(&ctx.bucket)
+                    .prefix(&p)
+                    .max_keys(1)
+                    .send()
+                    .await
+                    .map_err(|e| error_map::classify(&e, Ctx::Op("s3:ListBucket")))?;
+                Ok::<_, CoreError>((out.key_count().unwrap_or(0) == 0).then(|| Entry::Folder {
                     name: key::nfc(key::base_name(&p)),
                     last_modified: None,
                     key: p,
                     deleted: true,
-                });
-            }
-        }
+                }))
+            })
+            .buffered(LOOKUP_CONCURRENCY)
+            .try_collect()
+            .await?;
+        entries.extend(deleted_folders.into_iter().flatten());
         Ok(entries)
     }
 
@@ -600,17 +607,26 @@ impl ObjectService<'_> {
     ) -> CoreResult<Vec<RemoteConflict>> {
         key::validate_prefix(dest_prefix)?;
         let ctx = self.core.ctx(connection_id).await?;
-        let mut conflicts = Vec::new();
-        for t in targets {
-            if key::parent_prefix(&t.key) == dest_prefix {
-                continue;
-            }
-            let dest = key::move_destination(&t.key, key::parent_prefix(&t.key), dest_prefix);
-            if let Some(c) = remote_conflict(&ctx, &dest, t.is_folder).await? {
-                conflicts.push(c);
-            }
-        }
-        Ok(conflicts)
+        // 所有する値に集めてから並列に確認する（参照を持つイテレータのままだと、このコマンドの Future が
+        // Send にならない）
+        let checks: Vec<(String, bool)> = targets
+            .iter()
+            .filter(|t| key::parent_prefix(&t.key) != dest_prefix)
+            .map(|t| {
+                let dest = key::move_destination(&t.key, key::parent_prefix(&t.key), dest_prefix);
+                (dest, t.is_folder)
+            })
+            .collect();
+        // 結果は選択の順に並べる（DLG-08 の表示順）
+        let found: Vec<Option<RemoteConflict>> = stream::iter(checks)
+            .map(|(dest, is_folder)| {
+                let ctx = ctx.clone();
+                async move { remote_conflict(&ctx, &dest, is_folder).await }
+            })
+            .buffered(LOOKUP_CONCURRENCY)
+            .try_collect()
+            .await?;
+        Ok(found.into_iter().flatten().collect())
     }
 }
 
@@ -626,7 +642,8 @@ pub(crate) async fn remote_conflict(
         .list_objects_v2()
         .bucket(&ctx.bucket)
         .prefix(dest)
-        .max_keys(if is_folder { 1 } else { 1000 })
+        // キーの順に返るため、同じキーがあれば必ず先頭に来る（ファイルも 1 件で足りる）
+        .max_keys(1)
         .encoding_type(EncodingType::Url)
         .send()
         .await

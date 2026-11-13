@@ -245,8 +245,15 @@ impl Core {
     /// サインイン中のアカウントの接続を解決し、SDK クライアントを返す（07 §5.1 の入力検証を兼ねる）。
     pub(crate) async fn ctx(&self, connection_id: &str) -> CoreResult<Arc<ConnCtx>> {
         let account = self.account()?;
-        if let Some(ctx) = self.0.clients.lock().unwrap().get(connection_id) {
-            return Ok(ctx.clone());
+        let cached = || self.0.clients.lock().unwrap().get(connection_id).cloned();
+        if let Some(ctx) = cached() {
+            return Ok(ctx);
+        }
+        // 起動直後は一覧・バケット情報・メトリクスなどが同時に同じ接続を求める。1 つずつ作り、後から来た
+        // 呼び出しは先に作られたものを使う（キーチェーンの読み出しと AssumeRole を重複させない）
+        let _building = self.0.client_build.lock().await;
+        if let Some(ctx) = cached() {
+            return Ok(ctx);
         }
         let record = self
             .0

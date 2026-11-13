@@ -10,7 +10,7 @@ use aws_sdk_s3::types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPa
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use futures::{StreamExt, stream};
+use futures::{StreamExt, TryStreamExt, stream};
 use rusqlite::params;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
@@ -29,6 +29,9 @@ use crate::search::{self, IndexedObject};
 use crate::store::Db;
 use crate::util::{key, time};
 
+/// 準備で、アップロード先のフォルダを並列に列挙する数。
+const PREPARE_LIST_CONCURRENCY: usize = 8;
+
 /// アップロードする 1 件（フォルダマーカーを含む）。
 #[derive(Debug, Clone)]
 pub struct UploadFile {
@@ -46,6 +49,22 @@ pub struct UploadFile {
 impl UploadFile {
     pub(crate) fn display_name(&self) -> String {
         key::nfc(key::base_name(&self.key))
+    }
+
+    /// 再試行の前に、ローカルファイルのサイズと更新日時を取り直す。
+    ///
+    /// 準備（`upload_prepare`）のときの値のままだと、送信中に変更されたファイル（`FILE_CHANGED`）は、
+    /// 再試行しても同じ比較で必ず失敗する。読めない場合はそのままにし、実行時のエラーとして示す。
+    pub(crate) fn refresh_local(&mut self) {
+        if self.is_marker {
+            return;
+        }
+        if let Ok(meta) = std::fs::symlink_metadata(&self.path)
+            && meta.is_file()
+        {
+            self.size = meta.len();
+            self.mtime = meta.modified().ok();
+        }
     }
 }
 
@@ -171,8 +190,16 @@ pub fn expand_selection(
                 continue;
             }
             if entry.file_type().is_dir() {
+                // 除外するファイル（.DS_Store など）しかないフォルダも、空のフォルダとして作る。
+                // 中身がすべて除外されると、フォルダそのものがアップロード先に現れなくなるため
                 let empty = std::fs::read_dir(path)
-                    .map(|mut d| d.next().is_none())
+                    .map(|d| {
+                        d.flatten().all(|child| {
+                            let child_name = key::nfc(&child.file_name().to_string_lossy());
+                            child.file_type().is_ok_and(|t| t.is_file())
+                                && ignore.iter().any(|i| i == &child_name)
+                        })
+                    })
                     .unwrap_or(false);
                 if empty {
                     match to_key(rel, true) {
@@ -276,11 +303,21 @@ impl Core {
             .collect();
         let mut existing = BTreeMap::new();
         let mut existing_names = HashMap::new();
-        for parent in parents {
-            let (files, names) = list_folder(&ctx, &parent).await?;
+        // フォルダごとの列挙は並列に行う（階層の深いフォルダでは、アップロード先のフォルダが数千になる）
+        let mut listings = stream::iter(parents)
+            .map(|parent| {
+                let ctx = &ctx;
+                async move {
+                    let (files, names) = list_folder(ctx, &parent).await?;
+                    Ok::<_, CoreError>((parent, files, names))
+                }
+            })
+            .buffer_unordered(PREPARE_LIST_CONCURRENCY);
+        while let Some((parent, files, names)) = listings.try_next().await? {
             existing.extend(files);
             existing_names.insert(parent, names);
         }
+        drop(listings);
 
         let mut conflicts = Vec::new();
         let mut conflict_keys = HashSet::new();
@@ -370,7 +407,12 @@ impl Core {
 
     /// 失敗したファイルだけを再実行する（`transfer_retry`）。
     pub fn transfer_retry(&self, job_id: &str) -> CoreResult<JobId> {
-        let (job, files) = self.0.transfers.retry_files(job_id)?;
+        let (job, mut files) = self.0.transfers.retry_files(job_id)?;
+        for f in &mut files {
+            if let FileWork::Upload(upload) = f {
+                upload.refresh_local();
+            }
+        }
         if files.is_empty() {
             return Err(CoreError::with_message(
                 ErrorCode::NotFound,
@@ -647,7 +689,9 @@ async fn upload_parts_and_complete(
     let s3 = &ctx.clients.s3_transfer;
     let ranges = multipart::part_ranges(file.size, part_size);
     let concurrency = job.options.max_parts_per_file.max(1) as usize;
-    let results: Vec<CoreResult<CompletedPart>> = stream::iter(ranges.into_iter().enumerate())
+    // 1 つのパートが失敗したら、残りのパートは送らない（送信中のものも中断する）。最後まで試すと、
+    // 通信断や権限エラーのときに、全パートが再試行を終えるまでファイルが失敗にならない
+    let mut parts: Vec<CompletedPart> = stream::iter(ranges.into_iter().enumerate())
         .map(|(i, (offset, len))| {
             let counter = counter.clone();
             async move {
@@ -662,9 +706,8 @@ async fn upload_parts_and_complete(
             }
         })
         .buffer_unordered(concurrency)
-        .collect()
-        .await;
-    let mut parts = results.into_iter().collect::<CoreResult<Vec<_>>>()?;
+        .try_collect()
+        .await?;
     parts.sort_by_key(|p| p.part_number());
     ensure_unchanged(file)?;
     let complete = s3
@@ -764,6 +807,39 @@ async fn upload_part(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_uploads_the_file_as_it_is_now() {
+        let dir = crate::store::db::tempfile_guard::TempDir::new().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, b"data").unwrap();
+        let mut file = UploadFile {
+            mtime: std::fs::metadata(&path).unwrap().modified().ok(),
+            path: path.clone(),
+            key: "up/a.txt".into(),
+            size: 4,
+            storage_class: StorageClass::Standard,
+            replaces: false,
+            is_marker: false,
+        };
+        assert!(ensure_unchanged(&file).is_ok());
+
+        // 準備のあとに変更されたファイルは FILE_CHANGED になる
+        std::fs::write(&path, b"changed data").unwrap();
+        assert_eq!(
+            ensure_unchanged(&file).unwrap_err().code,
+            ErrorCode::FileChanged
+        );
+        // 再試行では現在のサイズと更新日時を取り直すため、同じ理由で失敗し続けない
+        file.refresh_local();
+        assert_eq!(file.size, 12);
+        assert!(ensure_unchanged(&file).is_ok());
+
+        // 読めなくなったファイルはそのままにする（実行時に読み書きのエラーになる）
+        std::fs::remove_file(&path).unwrap();
+        file.refresh_local();
+        assert_eq!(file.size, 12);
+    }
 
     #[test]
     fn keeps_the_record_when_the_abort_fails() {

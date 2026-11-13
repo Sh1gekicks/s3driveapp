@@ -245,7 +245,8 @@ impl SearchService<'_> {
         let mut index = self.status(connection_id).await?;
         let needs_scan = match index.state {
             IndexState::None => true,
-            IndexState::Stale => auto > 0,
+            // 全件走査を一度も終えていない場合は、自動更新が無効でも走査する（初回の作成と同じ。04 §10.1）
+            IndexState::Stale => auto > 0 || index.last_scan_at.is_none(),
             _ => false,
         };
         if needs_scan {

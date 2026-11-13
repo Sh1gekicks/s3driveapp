@@ -72,6 +72,8 @@ pub(crate) struct JobState {
     pub(crate) saved: Mutex<Vec<PathBuf>>,
     pub(crate) reserved_paths: Mutex<HashSet<PathBuf>>,
     last_emitted: AtomicU64,
+    /// バイト数以外（ファイルの開始・完了）の変化があり、次の間引きの周期で送る。
+    dirty: AtomicBool,
 }
 
 impl JobState {
@@ -337,6 +339,7 @@ impl TransferManager {
             saved: Mutex::new(Vec::new()),
             reserved_paths: Mutex::new(HashSet::new()),
             last_emitted: AtomicU64::new(u64::MAX),
+            dirty: AtomicBool::new(false),
         });
         self.shared.jobs.lock().unwrap().push(job.clone());
         self.emit(TransferEvent::JobUpdated(job.snapshot()));
@@ -396,11 +399,18 @@ async fn dispatcher(shared: Arc<Shared>, db: Db) {
                 continue;
             }
             shared.running.fetch_add(1, Ordering::Relaxed);
+            let starting = job.status() == JobStatus::Queued;
             job.update(|j| {
                 j.status = JobStatus::Running;
                 j.current_name = Some(work.name());
             });
-            emit(&shared, TransferEvent::JobUpdated(job.snapshot()));
+            // ジョブの開始はすぐに知らせる。2 件目以降のファイルの開始は、進捗と同じ間隔にまとめる
+            // （小さいファイルが多いと、ファイルごとに送るイベントが毎秒 100 件を超える。01 §6.2）
+            if starting {
+                emit(&shared, TransferEvent::JobUpdated(job.snapshot()));
+            } else {
+                job.dirty.store(true, Ordering::Relaxed);
+            }
             let (shared, db) = (shared.clone(), db.clone());
             tokio::spawn(async move {
                 let counter = Arc::new(AtomicU64::new(0));
@@ -457,7 +467,8 @@ fn file_finished(
             }
         }
     }
-    if job.pending.fetch_sub(1, Ordering::Relaxed) == 1 {
+    let finished = job.pending.fetch_sub(1, Ordering::Relaxed) == 1;
+    if finished {
         job.update(|j| {
             j.current_name = None;
             j.status = if job.halted.load(Ordering::Relaxed) {
@@ -472,7 +483,12 @@ fn file_finished(
             };
         });
     }
-    emit(shared, TransferEvent::JobUpdated(job.snapshot()));
+    // ジョブの完了はすぐに知らせる。途中のファイルの完了は、進捗と同じ間隔にまとめる
+    if finished {
+        emit(shared, TransferEvent::JobUpdated(job.snapshot()));
+    } else {
+        job.dirty.store(true, Ordering::Relaxed);
+    }
 }
 
 /// このファイルの失敗でジョブ全体を止めるか。アップロードの権限エラーは他のファイルでも起こるため止める（04 §4.5）。
@@ -480,7 +496,7 @@ fn halts_job(work: &FileWork, error: &CoreError) -> bool {
     matches!(work, FileWork::Upload(_)) && error.code == ErrorCode::AccessDenied
 }
 
-/// 実行中のジョブの進捗を 100 ms ごとに送る（変化があった場合のみ）。
+/// 実行中のジョブの進捗を 100 ms ごとに送る（バイト数、またはファイルの開始・完了に変化があった場合のみ）。
 async fn ticker(shared: Arc<Shared>) {
     let mut interval = tokio::time::interval(TICK);
     loop {
@@ -495,7 +511,9 @@ async fn ticker(shared: Arc<Shared>) {
             .collect();
         for job in jobs {
             let done = job.done_bytes();
-            if job.last_emitted.swap(done, Ordering::Relaxed) != done {
+            let moved = job.last_emitted.swap(done, Ordering::Relaxed) != done;
+            let dirty = job.dirty.swap(false, Ordering::Relaxed);
+            if moved || dirty {
                 emit(&shared, TransferEvent::JobUpdated(job.snapshot()));
             }
         }
@@ -503,6 +521,7 @@ async fn ticker(shared: Arc<Shared>) {
 }
 
 /// パートごとの再試行（最大 5 回、指数バックオフ。01 §7.2）。キャンセルされたら即座に止める。
+/// 通信エラーなど、同じ要求を繰り返せば解決しうるエラーだけを再試行する。
 pub(crate) async fn with_retry<T, F, Fut>(cancel: &CancellationToken, mut f: F) -> CoreResult<T>
 where
     F: FnMut() -> Fut,
@@ -517,7 +536,7 @@ where
         };
         match result {
             Ok(v) => return Ok(v),
-            Err(e) if e.code.retryable() && attempt + 1 < ATTEMPTS => {
+            Err(e) if e.code.transient() && attempt + 1 < ATTEMPTS => {
                 let delay = crate::util::backoff_delay(attempt);
                 attempt += 1;
                 log::debug!("再試行します（{attempt} 回目、{delay:?} 後）: {e}");
@@ -607,6 +626,125 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stops_sending_parts_after_one_fails() {
+        use aws_sdk_s3::operation::abort_multipart_upload::AbortMultipartUploadOutput;
+        use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadOutput;
+
+        let create = mock!(aws_sdk_s3::Client::create_multipart_upload).then_output(|| {
+            CreateMultipartUploadOutput::builder()
+                .upload_id("u1")
+                .build()
+        });
+        let part = mock!(aws_sdk_s3::Client::upload_part).then_http_response(|| {
+            HttpResponse::new(
+                StatusCode::try_from(403).unwrap(),
+                SdkBody::from("<Error><Code>AccessDenied</Code></Error>"),
+            )
+        });
+        let abort = mock!(aws_sdk_s3::Client::abort_multipart_upload)
+            .then_output(|| AbortMultipartUploadOutput::builder().build());
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&create, &part, &abort]);
+        let ctx = Arc::new(ConnCtx::for_tests("k1", "b", s3));
+
+        // 8 MiB のパート 4 つ分（中身のないスパースファイル）
+        let dir = crate::store::db::tempfile_guard::TempDir::new().unwrap();
+        let path = dir.path().join("big.bin");
+        let size = 3 * multipart::DEFAULT_PART_SIZE + 1;
+        std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+        let file = FileWork::Upload(UploadFile {
+            mtime: std::fs::metadata(&path).unwrap().modified().ok(),
+            path,
+            key: "up/big.bin".into(),
+            size,
+            storage_class: crate::model::StorageClass::Standard,
+            replaces: false,
+            is_marker: false,
+        });
+        let (db, _db_dir) = Db::open_temp().unwrap();
+        let manager = TransferManager::new(db);
+        let id = manager.enqueue(
+            ctx,
+            TransferKind::Upload,
+            "1 件をアップロード中".into(),
+            "b/up/".into(),
+            TransferSettings {
+                max_parts_per_file: 1,
+                ..Default::default()
+            },
+            vec![file],
+        );
+        let job = test_support::wait(&manager, &id).await;
+        assert_eq!(job.status, JobStatus::Failed);
+        // 最初のパートの失敗で打ち切り、残りの 3 パートは送らない
+        assert_eq!(part.num_calls(), 1);
+        assert_eq!(abort.num_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn batches_per_file_updates_into_the_progress_interval() {
+        let put = mock!(aws_sdk_s3::Client::put_object).then_output(|| {
+            aws_sdk_s3::operation::put_object::PutObjectOutput::builder()
+                .e_tag("\"e\"")
+                .build()
+        });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&put]);
+        let ctx = Arc::new(ConnCtx::for_tests("k1", "b", s3));
+        let dir = crate::store::db::tempfile_guard::TempDir::new().unwrap();
+        const FILES: usize = 200;
+        let files: Vec<FileWork> = (0..FILES)
+            .map(|i| {
+                let path = dir.path().join(format!("{i}.txt"));
+                std::fs::write(&path, b"data").unwrap();
+                FileWork::Upload(UploadFile {
+                    mtime: std::fs::metadata(&path).unwrap().modified().ok(),
+                    path,
+                    key: format!("up/{i}.txt"),
+                    size: 4,
+                    storage_class: crate::model::StorageClass::Standard,
+                    replaces: false,
+                    is_marker: false,
+                })
+            })
+            .collect();
+        let (db, _db_dir) = Db::open_temp().unwrap();
+        let manager = TransferManager::new(db);
+        let events = Arc::new(crate::jobs::MemorySink::<TransferEvent>::default());
+        manager.subscribe(events.clone());
+        let started = Instant::now();
+        let id = manager.enqueue(
+            ctx,
+            TransferKind::Upload,
+            format!("{FILES} 件をアップロード中"),
+            "b/up/".into(),
+            TransferSettings::default(),
+            files,
+        );
+        let job = test_support::wait(&manager, &id).await;
+        let elapsed = started.elapsed();
+        assert_eq!((job.status, job.done_files), (JobStatus::Succeeded, 200));
+
+        let updates: Vec<TransferJob> = events
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                TransferEvent::JobUpdated(j) => Some(j),
+                _ => None,
+            })
+            .collect();
+        // 登録・開始・完了と、100 ms ごとの進捗だけを送る（ファイルごとの開始・完了では送らない）
+        let ticks = (elapsed.as_millis() / TICK.as_millis()) as usize + 1;
+        assert!(
+            updates.len() <= 3 + ticks,
+            "{} updates in {elapsed:?}",
+            updates.len()
+        );
+        assert!(updates.len() < FILES);
+        // 最後のイベントは完了の状態
+        let last = updates.last().unwrap();
+        assert_eq!((last.status, last.done_files), (JobStatus::Succeeded, 200));
+    }
+
+    #[tokio::test]
     async fn waits_until_transfers_finish() {
         let put = mock!(aws_sdk_s3::Client::put_object).then_output(|| {
             aws_sdk_s3::operation::put_object::PutObjectOutput::builder()
@@ -674,6 +812,23 @@ mod tests {
         .await;
         assert!(r.is_err());
         assert_eq!(calls, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn does_not_retry_errors_that_need_a_fresh_start() {
+        // 対象が変わったエラーは、同じパートを繰り返しても解決しない。ダウンロードは最初からやり直し（04 §5.4）、
+        // アップロードはユーザーが再試行する（04 §4.5）
+        for code in [ErrorCode::PreconditionFailed, ErrorCode::FileChanged] {
+            let cancel = CancellationToken::new();
+            let mut calls = 0;
+            let r: CoreResult<()> = with_retry(&cancel, || {
+                calls += 1;
+                async move { Err(CoreError::new(code)) }
+            })
+            .await;
+            assert_eq!(r.unwrap_err().code, code);
+            assert_eq!(calls, 1, "{code:?}");
+        }
     }
 
     #[tokio::test(start_paused = true)]

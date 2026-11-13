@@ -1,7 +1,7 @@
 // SCR-02 ファイルブラウザの本体（フィルタバー、検索の状態、一覧、ステータスバー）。
 
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   useBucketInfo,
   useDebounced,
@@ -16,7 +16,7 @@ import { formatSize } from '@/lib/format';
 import { ja } from '@/lib/i18n/ja';
 import type { Connection, Entry } from '@/lib/ipc';
 import * as ipc from '@/lib/ipc';
-import { sortEntries } from '@/lib/sort';
+import { createIncrementalSorter } from '@/lib/sort';
 import { useNavStore } from '@/stores/nav';
 import { filterCount, toSearchQuery, useUiStore } from '@/stores/ui';
 import { FileList } from './file-list';
@@ -71,7 +71,12 @@ export function Browser({ connection, narrow }: { connection: Connection; narrow
   const index = useIndexStatus(connection.id, searching);
   const listing = useListing(connection.id, prefix, { showHidden, includeDeleted: showDeleted }, !searching);
 
-  const sorted = useMemo(() => sortEntries(listing.entries, sort), [listing.entries, sort]);
+  // ページが届くたびに全件を並べ替えないよう、追加分だけを並べ替えて併合する
+  const [sortIncrementally] = useState(createIncrementalSorter);
+  const sorted = useMemo(
+    () => sortIncrementally(listing.entries, sort),
+    [sortIncrementally, listing.entries, sort],
+  );
   const { entries, parents } = useMemo(() => {
     if (!searching) return { entries: sorted, parents: undefined };
     const list: Entry[] = [];

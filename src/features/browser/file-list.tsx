@@ -262,12 +262,22 @@ export function FileList({
     };
   }, []);
 
-  // キーボードで選択を動かしたら、選択した行が見えるようにする
+  // 選択を動かしたら（キーボード、上の階層への移動、新規フォルダなど）、選択した行が見えるようにする。
+  // 表示するのは選択（と表示モード）が変わったときの 1 回だけにする。一覧の中身が変わるたびに表示し直すと、
+  // 続きのページが届いたときやアップロードの完了で一覧を取り直したときに、スクロール位置が選択行に戻される
   const lastSelected = selectionKeys[selectionKeys.length - 1];
+  const pendingReveal = React.useRef<string | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 表示モードを切り替えたときも、選択した行を表示し直す
   React.useEffect(() => {
-    if (!lastSelected) return;
-    const index = order.indexOf(lastSelected);
+    pendingReveal.current = lastSelected;
+  }, [lastSelected, viewMode]);
+  React.useEffect(() => {
+    const key = pendingReveal.current;
+    if (!key || key !== lastSelected) return;
+    const index = order.indexOf(key);
+    // まだ一覧にない（読み込み中）場合は、届いたときに表示する
     if (index < 0) return;
+    pendingReveal.current = undefined;
     virtualizer.scrollToIndex(viewMode === 'list' ? index : Math.floor(index / perRow), { align: 'auto' });
   }, [lastSelected, order, viewMode, perRow, virtualizer]);
 
@@ -282,7 +292,11 @@ export function FileList({
       useUiStore.getState().select(entry.key, {}, order);
     }
   };
-  const selectedEntries = entries.filter((e) => selected.has(e.key));
+  // スクロールのたびに描画し直すため、全件の絞り込みは選択か一覧が変わったときだけにする
+  const selectedEntries = React.useMemo(
+    () => entries.filter((e) => selected.has(e.key)),
+    [entries, selected],
+  );
   const menuItems = selectedEntries.length > 0 ? itemMenu(selectedEntries) : searching ? [] : blankMenu();
   const onMenu = (id: string) => {
     switch (id) {
