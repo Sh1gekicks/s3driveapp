@@ -26,7 +26,10 @@ tauri = { version = "~2.11", features = ["macos-private-api", "tray-icon", "imag
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-log = "~2.9"
-tauri-plugin-updater = "2"
+# 既定の "zip" 機能は外す。Windows 向けの旧形式（Tauri v1 の .zip）の更新ファイルを展開するためのもので、
+# macOS の更新（.app.tar.gz）には使わない。有効にすると、勧告のある zip 4 系が Cargo.lock に入る
+# （修正版は zip 9.0.5 以降。2026-11 時点の最新の tauri-plugin-updater 2.12.0 は zip 4 を要求する）
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-process = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
