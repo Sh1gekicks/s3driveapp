@@ -116,6 +116,48 @@ fn refresh_counts(tx: &Transaction<'_>, connection_id: &str) -> rusqlite::Result
     Ok(())
 }
 
+/// 件数と合計サイズを差分で更新する。
+///
+/// 変更のたびに [`refresh_counts`] で全行を数え直すと、アップロード 1 ファイルごとに接続の全行を読むことになる。
+/// 走査の完了時には数え直すため、差分の誤差は残らない。
+fn adjust_counts(
+    tx: &Transaction<'_>,
+    connection_id: &str,
+    objects: i64,
+    bytes: i64,
+) -> rusqlite::Result<()> {
+    if objects == 0 && bytes == 0 {
+        return Ok(());
+    }
+    tx.execute(
+        "UPDATE index_state SET object_count = max(0, object_count + ?2), total_bytes = max(0, total_bytes + ?3)
+         WHERE connection_id = ?1",
+        params![connection_id, objects, bytes],
+    )?;
+    Ok(())
+}
+
+/// `prefix` 配下のキーに絞る条件（`?1` は接続 ID）と、その引数。
+///
+/// `substr(key, 1, length(?)) = ?` はインデックスを使えず接続の全行を読むため、(connection_id, key) の
+/// インデックスで引ける範囲の条件にする。
+fn under_prefix(connection_id: &str, prefix: &str) -> (&'static str, Vec<String>) {
+    let cid = connection_id.to_string();
+    if prefix.is_empty() {
+        return ("connection_id = ?1", vec![cid]);
+    }
+    match key::prefix_upper_bound(prefix) {
+        Some(upper) => (
+            "connection_id = ?1 AND key >= ?2 AND key < ?3",
+            vec![cid, prefix.to_string(), upper],
+        ),
+        None => (
+            "connection_id = ?1 AND substr(key, 1, length(?2)) = ?2",
+            vec![cid, prefix.to_string()],
+        ),
+    }
+}
+
 /// アプリ自身の変更（アップロード・移動・クラス変更など）を即時に反映する。インデックスがなければ何もしない。
 pub async fn upsert(db: &Db, connection_id: &str, objects: Vec<IndexedObject>) -> CoreResult<()> {
     if objects.is_empty() {
@@ -128,11 +170,25 @@ pub async fn upsert(db: &Db, connection_id: &str, objects: Vec<IndexedObject>) -
             return Ok(());
         };
         let mut seen = BTreeSet::new();
+        let (mut count, mut bytes) = (0i64, 0i64);
         for o in &objects {
+            let previous: Option<(i64, bool)> = tx
+                .query_row(
+                    "SELECT size, is_marker FROM objects WHERE connection_id = ?1 AND key = ?2",
+                    params![cid, o.key],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
             write_object(&tx, &cid, o, generation)?;
             write_prefixes(&tx, &cid, &o.key, generation, &mut seen)?;
+            let (old_size, old_counted) = match previous {
+                Some((size, is_marker)) => (size, !is_marker),
+                None => (0, false),
+            };
+            bytes += o.size as i64 - old_size;
+            count += i64::from(!key::is_folder_key(&o.key)) - i64::from(old_counted);
         }
-        refresh_counts(&tx, &cid)?;
+        adjust_counts(&tx, &cid, count, bytes)?;
         tx.commit()?;
         Ok(())
     })
@@ -151,8 +207,19 @@ pub async fn remove(db: &Db, connection_id: &str, keys: Vec<String>) -> CoreResu
             return Ok(());
         }
         let mut parents = BTreeSet::new();
+        let (mut count, mut bytes) = (0i64, 0i64);
         for k in &keys {
-            tx.execute("DELETE FROM objects WHERE connection_id = ?1 AND key = ?2", params![cid, k])?;
+            let removed: Option<(i64, bool)> = tx
+                .query_row(
+                    "DELETE FROM objects WHERE connection_id = ?1 AND key = ?2 RETURNING size, is_marker",
+                    params![cid, k],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((size, is_marker)) = removed {
+                bytes -= size;
+                count -= i64::from(!is_marker);
+            }
             let mut p = if key::is_folder_key(k) { k.clone() } else { key::parent_prefix(k).to_string() };
             while !p.is_empty() {
                 parents.insert(p.clone());
@@ -161,13 +228,17 @@ pub async fn remove(db: &Db, connection_id: &str, keys: Vec<String>) -> CoreResu
         }
         // 深い階層から順に、配下にオブジェクトがなくなったプレフィックスを消す
         for p in parents.iter().rev() {
-            tx.execute(
-                "DELETE FROM prefixes WHERE connection_id = ?1 AND prefix = ?2
-                   AND NOT EXISTS (SELECT 1 FROM objects WHERE connection_id = ?1 AND substr(key, 1, length(?2)) = ?2)",
-                params![cid, p],
+            let (filter, args) = under_prefix(&cid, p);
+            let occupied: bool = tx.query_row(
+                &format!("SELECT EXISTS (SELECT 1 FROM objects WHERE {filter})"),
+                rusqlite::params_from_iter(args.iter()),
+                |r| r.get(0),
             )?;
+            if !occupied {
+                tx.execute("DELETE FROM prefixes WHERE connection_id = ?1 AND prefix = ?2", params![cid, p])?;
+            }
         }
-        refresh_counts(&tx, &cid)?;
+        adjust_counts(&tx, &cid, count, bytes)?;
         tx.commit()?;
         Ok(())
     })
@@ -193,6 +264,25 @@ pub async fn folder_marker_dates(
     .await
 }
 
+/// 全件走査を 1 回以上終えたインデックスがあるか。`idle` なら、走査中でないことも求める。
+///
+/// 初回の走査が失敗・キャンセルで終わると、途中までの行だけが残る。それを完成したインデックスとして
+/// 集計に使うと、フォルダの合計サイズやクラス別の容量が実際より小さくなる。
+fn fully_scanned(
+    c: &rusqlite::Connection,
+    connection_id: &str,
+    idle: bool,
+) -> rusqlite::Result<bool> {
+    let row: Option<(String, Option<String>)> = c
+        .query_row(
+            "SELECT status, last_full_scan_at FROM index_state WHERE connection_id = ?1",
+            [connection_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(row.is_some_and(|(status, last_scan)| last_scan.is_some() && (!idle || status == "ready")))
+}
+
 /// インデックスが完成していれば、そこからフォルダの項目数と合計サイズを求める。
 pub async fn folder_summary(
     db: &Db,
@@ -201,14 +291,7 @@ pub async fn folder_summary(
 ) -> CoreResult<Option<FolderSummary>> {
     let (cid, prefix) = (connection_id.to_string(), prefix.to_string());
     db.run(move |c| {
-        let ready: Option<String> = c
-            .query_row(
-                "SELECT status FROM index_state WHERE connection_id = ?1",
-                [&cid],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if ready.as_deref() != Some("ready") {
+        if !fully_scanned(c, &cid, true)? {
             return Ok(None);
         }
         let files: i64 = c.query_row(
@@ -221,9 +304,10 @@ pub async fn folder_summary(
             params![cid, prefix],
             |r| r.get(0),
         )?;
+        let (filter, args) = under_prefix(&cid, &prefix);
         let total: i64 = c.query_row(
-            "SELECT coalesce(sum(size), 0) FROM objects WHERE connection_id = ?1 AND substr(key, 1, length(?2)) = ?2",
-            params![cid, prefix],
+            &format!("SELECT coalesce(sum(size), 0) FROM objects WHERE {filter}"),
+            rusqlite::params_from_iter(args.iter()),
             |r| r.get(0),
         )?;
         Ok(Some(FolderSummary {
@@ -260,11 +344,16 @@ pub async fn status(
             ..IndexStatus::none()
         });
     };
-    let stale = auto_refresh_minutes > 0
-        && last_scan
-            .as_deref()
-            .and_then(time::parse_rfc3339)
-            .is_none_or(|t| (time::now() - t).num_minutes() >= auto_refresh_minutes as i64);
+    // 全件走査を一度も終えていない（初回が失敗・キャンセルで終わった）ものは、自動更新の設定に関係なく
+    // 古いものとして扱い、次の検索で走査し直す
+    let scanned_at = last_scan.as_deref().and_then(time::parse_rfc3339);
+    let stale = match scanned_at {
+        None => true,
+        Some(t) => {
+            auto_refresh_minutes > 0
+                && (time::now() - t).num_minutes() >= auto_refresh_minutes as i64
+        }
+    };
     let state = match (progress.is_some() || state == "building", stale) {
         (true, _) => IndexState::Building,
         (false, true) => IndexState::Stale,
@@ -303,14 +392,8 @@ pub async fn class_totals(
 ) -> CoreResult<Option<(HashMap<StorageClass, u64>, u64)>> {
     let cid = connection_id.to_string();
     db.run(move |c| {
-        let exists: Option<String> = c
-            .query_row(
-                "SELECT status FROM index_state WHERE connection_id = ?1",
-                [&cid],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if exists.is_none() {
+        // 再走査中は前回までの行が残っているため使う。初回の走査を終えていないものは使わない
+        if !fully_scanned(c, &cid, false)? {
             return Ok(None);
         }
         let mut stmt = c.prepare(
@@ -445,6 +528,139 @@ mod tests {
         remove(&db, "c", vec!["a/b.txt".into()]).await.unwrap();
         let root = folder_summary(&db, "c", "").await.unwrap().unwrap();
         assert_eq!(root.item_count, 1); // a/ は空になったので消える
+    }
+
+    async fn counts(db: &Db) -> (i64, i64) {
+        db.run(|c| {
+            Ok(c.query_row(
+                "SELECT object_count, total_bytes FROM index_state WHERE connection_id = 'c'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?)
+        })
+        .await
+        .unwrap()
+    }
+
+    fn object(key: &str, size: u64) -> IndexedObject {
+        IndexedObject {
+            key: key.into(),
+            size,
+            last_modified: "2026-01-01T00:00:00Z".into(),
+            etag: None,
+            storage_class: StorageClass::Standard,
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_counts_in_step_with_changes() {
+        let (db, _dir) = Db::open_temp().unwrap();
+        let at = "2026-01-01T00:00:00Z";
+        seed(
+            &db,
+            "c",
+            &[
+                ("a/x.txt", 10, at, StorageClass::Standard),
+                ("a/y.txt", 5, at, StorageClass::Standard),
+                ("b/", 0, at, StorageClass::Standard),
+            ],
+        )
+        .await;
+        assert_eq!(counts(&db).await, (2, 15));
+
+        // 置き換え（サイズの差だけ増える）、新規、フォルダマーカー（件数に数えない）
+        upsert(
+            &db,
+            "c",
+            vec![object("a/x.txt", 30), object("a/z.txt", 1), object("d/", 0)],
+        )
+        .await
+        .unwrap();
+        assert_eq!(counts(&db).await, (3, 36));
+
+        // インデックスにないキーの削除は数えない
+        remove(
+            &db,
+            "c",
+            vec!["a/y.txt".into(), "b/".into(), "missing.txt".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(counts(&db).await, (2, 31));
+
+        // 差分で更新した値は、数え直した値と一致する
+        db.run(|c| {
+            let tx = c.transaction()?;
+            refresh_counts(&tx, "c")?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_eq!(counts(&db).await, (2, 31));
+    }
+
+    #[tokio::test]
+    async fn limits_folder_queries_to_the_keys_under_the_prefix() {
+        let (db, _dir) = Db::open_temp().unwrap();
+        let at = "2026-01-01T00:00:00Z";
+        seed(
+            &db,
+            "c",
+            &[
+                ("a/x.txt", 10, at, StorageClass::Standard),
+                ("a/b/y.txt", 5, at, StorageClass::Standard),
+                // 「a/」で始まらない、並び順で前後のキー
+                ("a.txt", 100, at, StorageClass::Standard),
+                ("a0.txt", 100, at, StorageClass::Standard),
+                ("ab/z.txt", 100, at, StorageClass::Standard),
+            ],
+        )
+        .await;
+        let a = folder_summary(&db, "c", "a/").await.unwrap().unwrap();
+        assert_eq!((a.item_count, a.total_bytes), (2, 15));
+        let root = folder_summary(&db, "c", "").await.unwrap().unwrap();
+        assert_eq!(root.total_bytes, 315);
+
+        // 配下がなくなったフォルダだけを取り除く（「a/」には x.txt が残る）
+        remove(&db, "c", vec!["a/b/y.txt".into()]).await.unwrap();
+        let prefixes: Vec<String> = db
+            .run(|c| {
+                let mut stmt = c.prepare(
+                    "SELECT prefix FROM prefixes WHERE connection_id = 'c' ORDER BY prefix",
+                )?;
+                let rows = stmt
+                    .query_map([], |r| r.get(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .await
+            .unwrap();
+        assert_eq!(prefixes, ["a/", "ab/"]);
+    }
+
+    #[tokio::test]
+    async fn ignores_an_index_whose_first_scan_never_finished() {
+        let (db, _dir) = Db::open_temp().unwrap();
+        // 初回の走査が失敗・キャンセルで終わると、途中までの行と、走査日時のない状態が残る
+        db.run(|c| {
+            let tx = c.transaction()?;
+            tx.execute(
+                "INSERT INTO index_state (connection_id, status, generation) VALUES ('c', 'ready', 1)",
+                [],
+            )?;
+            write_object(&tx, "c", &object("a/x.txt", 10), 1)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        // 一部しかないため、集計には使わない（S3 の列挙・CloudWatch に任せる）
+        assert!(folder_summary(&db, "c", "a/").await.unwrap().is_none());
+        assert!(class_totals(&db, "c").await.unwrap().is_none());
+        // 自動更新が無効（0）でも、古いものとして次の検索で走査し直す
+        let s = status(&db, "c", 0, None).await.unwrap();
+        assert_eq!((s.state, s.last_scan_at), (IndexState::Stale, None));
     }
 
     #[tokio::test]

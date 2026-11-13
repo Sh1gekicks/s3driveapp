@@ -395,6 +395,8 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | `CANCELED` | ユーザーによるキャンセル | —（エラーとして表示しない） | × | — |
 | `INTERNAL` | 想定外のエラー | 予期しないエラーが発生しました | × | 「詳細」でログの場所を示す |
 
+「再試行」の列は、ユーザーが同じ操作をやり直せば解決しうるか（`AppError.retryable`）を示す。このうち転送のパート単位で自動的にリトライするのは `NETWORK`・`TIMEOUT`・`SLOW_DOWN` だけである（[01 §7.2](01-architecture.md#72-リトライ)）。`PRECONDITION_FAILED` はファイルを最初からやり直し、`FILE_CHANGED` はユーザーの「再試行」でファイルの情報を取り直す。
+
 AWS のエラーコードとの対応:
 
 | AWS のエラー | コード |

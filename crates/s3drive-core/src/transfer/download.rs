@@ -5,19 +5,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aws_sdk_s3::types::ChecksumMode;
-use futures::{StreamExt, stream};
+use futures::{StreamExt, TryStreamExt, stream};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use super::multipart::{DOWNLOAD_RANGE_SIZE, RANGED_DOWNLOAD_THRESHOLD, part_ranges};
 use super::{FileWork, JobState, with_retry};
 use crate::Core;
 use crate::aws::error_map::{self, Ctx};
+use crate::connections::ConnCtx;
 use crate::error::{CoreError, CoreResult, ErrorCode};
 use crate::model::{DownloadDestination, JobId, Target, TransferKind};
-use crate::objects::{head, list_recursive};
+use crate::objects::{HeadInfo, head, list_recursive};
 use crate::util::{key, time};
 
 const TEMP_SUFFIX: &str = ".s3drive-download";
+/// ダウンロードの開始時に、選択したファイルの `HeadObject` を並列に呼ぶ数。
+const HEAD_CONCURRENCY: usize = 8;
 
 /// ダウンロードする 1 件（フォルダマーカーは空のフォルダとして作る）。
 #[derive(Debug, Clone)]
@@ -105,6 +108,24 @@ pub fn version_file_name(name: &str, last_modified: &str) -> String {
     format!("{stem} ({stamp}){ext}")
 }
 
+/// 選択したファイル（フォルダと、保存先に使えない名前のものを除く）のメタデータを、選択の順に返す。
+/// 並列に取得する（1 件ずつでは、件数が多いと転送が始まるまで待たされる）。
+async fn head_selected(ctx: &Arc<ConnCtx>, targets: &[Target]) -> CoreResult<Vec<HeadInfo>> {
+    let to_head: Vec<(String, Option<String>)> = targets
+        .iter()
+        .filter(|t| !t.is_folder && key::is_safe_local_name(&key::nfc(key::base_name(&t.key))))
+        .map(|t| (t.key.clone(), t.version_id.clone()))
+        .collect();
+    stream::iter(to_head)
+        .map(|(object_key, version_id)| {
+            let ctx = ctx.clone();
+            async move { head(&ctx, &object_key, version_id.as_deref()).await }
+        })
+        .buffered(HEAD_CONCURRENCY)
+        .try_collect()
+        .await
+}
+
 impl Core {
     /// ダウンロードの開始（04 §5.2）。取り出していないアーカイブは `INVALID_OBJECT_STATE`（DLG-07 を表示する）。
     pub async fn download_start(
@@ -129,9 +150,13 @@ impl Core {
                 .next()
                 .ok_or_else(|| CoreError::new(ErrorCode::NotFound))?,
         };
-        let mut files = Vec::new();
         for t in &targets {
             key::validate_key(&t.key)?;
+        }
+        let heads = head_selected(&ctx, &targets).await?;
+        let mut heads = heads.into_iter();
+        let mut files = Vec::new();
+        for t in &targets {
             if t.is_folder {
                 let folder_name = key::nfc(key::base_name(&t.key));
                 let (objects, _) = list_recursive(&ctx, &t.key, usize::MAX).await?;
@@ -176,7 +201,9 @@ impl Core {
                     files.push(DownloadFile::rejected(&t.key, t.version_id.clone()));
                     continue;
                 }
-                let info = head(&ctx, &t.key, t.version_id.as_deref()).await?;
+                let info = heads
+                    .next()
+                    .ok_or_else(|| CoreError::internal("missing object metadata"))?;
                 if info.restore.needs_restore() {
                     return Err(CoreError::new(ErrorCode::InvalidObjectState).detail(t.key.clone()));
                 }
@@ -198,7 +225,7 @@ impl Core {
         }
         // 開始前に空き容量を確認する（04 §5.4）
         let total: u64 = files.iter().map(|f| f.size).sum();
-        std::fs::create_dir_all(&dir).map_err(|e| {
+        tokio::fs::create_dir_all(&dir).await.map_err(|e| {
             CoreError::with_message(ErrorCode::LocalIo, "保存先に書き込めません")
                 .detail(e.to_string())
         })?;
@@ -267,13 +294,18 @@ pub(super) async fn run(
     if matches!(&result, Err(e) if e.code == ErrorCode::PreconditionFailed) {
         // ダウンロード中に置き換わった: 最初から 1 回だけやり直す（04 §5.4）
         counter.store(0, Ordering::Relaxed);
-        let refreshed = head(&job.ctx, &file.key, file.version_id.as_deref()).await?;
-        let retry = DownloadFile {
-            etag: refreshed.etag,
-            size: refreshed.size,
-            ..file.clone()
+        // 取り直せなかった場合も、下で一時ファイルと予約した保存先を片付ける（ここで `?` で抜けない）
+        result = match head(&job.ctx, &file.key, file.version_id.as_deref()).await {
+            Ok(refreshed) => {
+                let retry = DownloadFile {
+                    etag: refreshed.etag,
+                    size: refreshed.size,
+                    ..file.clone()
+                };
+                download_to(job, &retry, &temp, counter).await
+            }
+            Err(e) => Err(e),
         };
-        result = download_to(job, &retry, &temp, counter).await;
     }
     let finished = async {
         let mtime = result?;
@@ -383,7 +415,9 @@ async fn download_to(
     }
     let ranges = part_ranges(file.size, DOWNLOAD_RANGE_SIZE);
     let concurrency = job.options.max_parts_per_file.max(1) as usize;
-    let results: Vec<CoreResult<Option<chrono::DateTime<chrono::Utc>>>> =
+    // 1 つの範囲が失敗したら、残りの範囲は取得しない（取得中のものも中断する）。置き換わった場合（412）は
+    // どの範囲も同じ結果になるため、すぐに最初からやり直す（04 §5.4）
+    let mtimes: Vec<Option<chrono::DateTime<chrono::Utc>>> =
         stream::iter(ranges.into_iter().enumerate())
             .map(|(i, (start, len))| {
                 let counter = counter.clone();
@@ -442,15 +476,11 @@ async fn download_to(
                     .await
                 }
             })
-            .buffered(concurrency)
-            .collect()
-            .await;
-    let mut mtime = None;
-    for r in results {
-        if let Some(m) = r? {
-            mtime = Some(m);
-        }
-    }
+            .buffer_unordered(concurrency)
+            .try_collect()
+            .await?;
+    // 更新日時は先頭の範囲の応答から得る
+    let mtime = mtimes.into_iter().flatten().next();
     let actual = tokio::fs::metadata(temp)
         .await
         .map_err(|e| CoreError::local_io(temp, &e))?
@@ -598,6 +628,67 @@ mod tests {
         let job = wait(&manager, &id).await;
         assert_eq!(job.status, JobStatus::Succeeded, "{job:?}");
         assert_eq!(std::fs::read(dir.path().join("a.txt")).unwrap(), b"fresh");
+        assert_eq!(
+            (stale.num_calls(), head.num_calls(), fresh.num_calls()),
+            (1, 1, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn restarts_a_ranged_download_at_the_first_replaced_range() {
+        // 範囲指定のダウンロード中に置き換わると、どの範囲も 412 になる。最初の 412 で残りの範囲をやめ、
+        // 範囲ごとの再試行もせずに、最初からやり直す（04 §5.4）
+        let stale = mock!(aws_sdk_s3::Client::get_object)
+            .match_requests(|r| r.if_match() == Some("\"old\""))
+            .then_http_response(|| {
+                HttpResponse::new(
+                    StatusCode::try_from(412).unwrap(),
+                    SdkBody::from("<Error><Code>PreconditionFailed</Code></Error>"),
+                )
+            });
+        let head = mock!(aws_sdk_s3::Client::head_object).then_output(|| {
+            HeadObjectOutput::builder()
+                .e_tag("\"new\"")
+                .content_length(5)
+                .last_modified(aws_smithy_types::DateTime::from_secs(1_790_000_000))
+                .build()
+        });
+        let fresh = mock!(aws_sdk_s3::Client::get_object)
+            .match_requests(|r| r.if_match() == Some("\"new\""))
+            .then_output(|| {
+                GetObjectOutput::builder()
+                    .body(ByteStream::from_static(b"fresh"))
+                    .build()
+            });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&stale, &head, &fresh]);
+        let ctx = Arc::new(ConnCtx::for_tests("k1", "b", s3));
+        let dir = TempDir::new().unwrap();
+        let (db, _db_dir) = crate::store::Db::open_temp().unwrap();
+        let manager = crate::transfer::TransferManager::new(db);
+        let id = manager.enqueue(
+            ctx,
+            TransferKind::Download,
+            "「big.bin」をダウンロード中".into(),
+            "~/Downloads".into(),
+            TransferSettings {
+                max_parts_per_file: 1,
+                ..Default::default()
+            },
+            vec![FileWork::Download(DownloadFile {
+                key: "big.bin".into(),
+                version_id: None,
+                // 16 MiB の範囲 4 つ分
+                size: RANGED_DOWNLOAD_THRESHOLD,
+                etag: "old".into(),
+                dir: dir.path().to_path_buf(),
+                file_name: "big.bin".into(),
+                is_marker: false,
+                rejected: false,
+            })],
+        );
+        let job = wait(&manager, &id).await;
+        assert_eq!(job.status, JobStatus::Succeeded, "{job:?}");
+        assert_eq!(std::fs::read(dir.path().join("big.bin")).unwrap(), b"fresh");
         assert_eq!(
             (stale.num_calls(), head.num_calls(), fresh.num_calls()),
             (1, 1, 1)

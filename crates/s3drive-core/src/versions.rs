@@ -77,7 +77,7 @@ async fn list_page(
         .any(|k| key::url_decode_key(k).as_str() > object_key);
     let next = if out.is_truncated() == Some(true) && !passed {
         match (out.next_key_marker(), out.next_version_id_marker()) {
-            (Some(k), Some(v)) => Some((k.to_string(), v.to_string())),
+            (Some(k), Some(v)) => Some((next_key_marker(k), v.to_string())),
             _ => None,
         }
     } else {
@@ -138,9 +138,18 @@ pub(crate) async fn list_all_versions(
         if out.is_truncated() != Some(true) {
             return Ok(out_ids);
         }
-        key_marker = out.next_key_marker().map(str::to_string);
+        key_marker = out.next_key_marker().map(next_key_marker);
         version_marker = out.next_version_id_marker().map(str::to_string);
     }
+}
+
+/// 応答の `NextKeyMarker` を、次の要求の `KeyMarker` に渡す値にする。
+///
+/// `EncodingType=url` を指定すると、キーだけでなく `NextKeyMarker` もエンコードされて返る。そのまま渡すと
+/// エンコードされた文字列（`%E8…`）の次から列挙し直すことになり、日本語や空白を含むキーがページの境界に
+/// 来たときに、同じ範囲を繰り返し読んで終わらなくなる。
+pub(crate) fn next_key_marker(encoded: &str) -> String {
+    key::url_decode_key(encoded)
 }
 
 /// 最も古いバージョンの日時（作成日の優先 1。04 §9.2）。
@@ -423,6 +432,59 @@ mod tests {
         sort_newest_first(&mut vs);
         let ids: Vec<&str> = vs.iter().map(|v| v.version_id.as_str()).collect();
         assert_eq!(ids, ["c", "b", "a"]);
+    }
+
+    #[tokio::test]
+    async fn continues_listing_with_a_decoded_key_marker() {
+        use aws_sdk_s3::operation::list_object_versions::ListObjectVersionsOutput;
+        use aws_smithy_mocks::{RuleMode, mock, mock_client};
+
+        // EncodingType=url では、キーと同じく NextKeyMarker もエンコードされて返る
+        const ENCODED: &str = "p/%E8%B3%87%E6%96%99+1.txt";
+        const DECODED: &str = "p/資料 1.txt";
+        fn version(id: &str) -> aws_sdk_s3::types::ObjectVersion {
+            aws_sdk_s3::types::ObjectVersion::builder()
+                .key(ENCODED)
+                .version_id(id)
+                .build()
+        }
+        let first = mock!(aws_sdk_s3::Client::list_object_versions)
+            .match_requests(|r| r.key_marker().is_none())
+            .then_output(|| {
+                ListObjectVersionsOutput::builder()
+                    .versions(version("v2"))
+                    .is_truncated(true)
+                    .next_key_marker(ENCODED)
+                    .next_version_id_marker("v2")
+                    .build()
+            });
+        // 続きは、デコードしたキーを KeyMarker に渡して取得する（エンコードされたまま渡すと別の位置から列挙される）
+        let second = mock!(aws_sdk_s3::Client::list_object_versions)
+            .match_requests(|r| {
+                r.key_marker() == Some(DECODED) && r.version_id_marker() == Some("v2")
+            })
+            .then_output(|| {
+                ListObjectVersionsOutput::builder()
+                    .versions(version("v1"))
+                    .is_truncated(false)
+                    .build()
+            });
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&first, &second]);
+        let ctx = ConnCtx::for_tests("k1", "b", s3);
+
+        let ids = list_all_versions(&ctx, "p/", None).await.unwrap();
+        assert_eq!(
+            ids,
+            vec![
+                (DECODED.to_string(), Some("v2".to_string())),
+                (DECODED.to_string(), Some("v1".to_string())),
+            ]
+        );
+        assert_eq!((first.num_calls(), second.num_calls()), (1, 1));
+
+        // バージョン一覧（1 つのキー）の続きも同じ
+        let (_, next) = list_page(&ctx, DECODED, None, None).await.unwrap();
+        assert_eq!(next, Some((DECODED.to_string(), "v2".to_string())));
     }
 
     #[test]

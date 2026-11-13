@@ -261,10 +261,18 @@ async fn build(
     let ok = outcome.is_ok();
     db.run(move |c| {
         let tx = c.transaction()?;
+        if super::current_generation(&tx, &cid)? != Some(generation) {
+            // 走査中にインデックスが削除された（設定「削除」・接続の削除）。削除のあとに書き込んだ行が、
+            // 状態のないまま残らないように消す
+            tx.execute("DELETE FROM objects WHERE connection_id = ?1 AND generation = ?2", params![cid, generation])?;
+            tx.execute("DELETE FROM prefixes WHERE connection_id = ?1 AND generation = ?2", params![cid, generation])?;
+            tx.commit()?;
+            return Ok(());
+        }
         if ok {
             // 走査で見つからなかった（削除された）キーを消す
-            tx.execute("DELETE FROM objects WHERE connection_id = ?1 AND generation < ?2", params![cid, generation])?;
-            tx.execute("DELETE FROM prefixes WHERE connection_id = ?1 AND generation < ?2", params![cid, generation])?;
+            tx.execute("DELETE FROM objects WHERE connection_id = ?1 AND generation <> ?2", params![cid, generation])?;
+            tx.execute("DELETE FROM prefixes WHERE connection_id = ?1 AND generation <> ?2", params![cid, generation])?;
             tx.execute(
                 "UPDATE index_state SET status = 'ready', last_full_scan_at = ?2 WHERE connection_id = ?1",
                 params![cid, time::now_rfc3339()],

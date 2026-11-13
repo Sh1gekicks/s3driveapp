@@ -197,7 +197,7 @@ erDiagram
 
 | テーブル | 用途 |
 |---|---|
-| `index_state` | 接続ごとの検索インデックスの状態（作成中・完了、世代番号、件数、最終走査日時） |
+| `index_state` | 接続ごとの検索インデックスの状態（作成中・完了、世代番号、件数、最終走査日時）。件数と合計サイズは、アプリ自身の変更では差分で更新し、全件走査の完了時に数え直す。`last_full_scan_at` が空のもの（初回の走査を終えていない）は集計に使わない |
 | `objects` | 検索インデックス本体（1 オブジェクト 1 行） |
 | `objects_fts` | `objects.name_norm` の全文検索インデックス（FTS5、trigram） |
 | `prefixes` | フォルダ名の検索用（親プレフィックスの一覧） |
@@ -245,7 +245,12 @@ CREATE VIRTUAL TABLE objects_fts USING fts5(
   content_rowid = 'id',
   tokenize = 'trigram'
 );
--- objects の INSERT / UPDATE / DELETE に合わせて objects_fts を更新するトリガーを作成する
+-- objects の INSERT / UPDATE / DELETE に合わせて objects_fts を更新するトリガーを作成する。
+-- UPDATE のトリガーは name_norm が変わったときだけ動かす（WHEN old.name_norm <> new.name_norm。版 2）。
+-- 再走査は同じ名前の行を上書きするため、絞らないと走査のたびに全行の FTS を書き直すことになる
+
+-- フォルダマーカーだけの索引（一覧のフォルダの更新日。版 2）
+CREATE INDEX objects_markers ON objects (connection_id, parent) WHERE is_marker = 1;
 
 CREATE TABLE metrics_cache (
   connection_id TEXT NOT NULL,                  -- 単価など接続に依存しないものは ''
@@ -294,7 +299,7 @@ LIMIT :limit OFFSET :offset;
 
 ## 6. マイグレーション
 
-- SQLite は rusqlite_migration で `user_version` を管理し、起動時に適用する。
+- SQLite は rusqlite_migration で `user_version` を管理し、起動時に適用する。版ごとに SQL ファイルを分ける（`migrations.sql` が版 1、`migrations_002.sql` が版 2）。適用済みのファイルは書き換えず、変更は新しい版として加える。
 - SQLite のファイルが壊れていて開けない場合は、ファイルを退避して作り直す（データはキャッシュと記録なので、S3 から再構築できる）。作り直したことはトーストで知らせる。
 - 設定ファイルは §2 のとおり `version` で変換する。
 
