@@ -27,6 +27,11 @@ ignore = [
   # 要求でだけ使われ、悪用には利用者の Mac 上で処理時間を観測する必要がある。
   # aws-sigv4 と openidconnect が crypto-bigint 0.7 に移ったら更新し、この例外を外す
   { id = "RUSTSEC-2026-0387", reason = "秘密の値に関わるのは SigV4a の鍵の導出だけで、悪用には利用者の端末上での観測が必要なため。修正版を使う aws-sigv4・openidconnect の公開を待つ" },
+  # pin-utils の保守の終了（2026-10-01 にリポジトリがアーカイブされた）。脆弱性の報告ではない。
+  # 依存元は AWS SDK の aws-smithy-http・aws-smithy-runtime・aws-smithy-types で、このアプリは直接使っていない
+  # （2026-11 時点の最新: aws-smithy-http 0.64.1、aws-smithy-runtime 1.15.0、aws-smithy-types 1.8.1）。
+  # AWS SDK が core::pin::pin! などに移ったら更新し、この例外を外す
+  { id = "RUSTSEC-2026-0441", reason = "保守の終了の通知で脆弱性ではない。AWS SDK（aws-smithy-*）経由の依存のため、SDK が使わなくなるのを待つ" },
 ]
 
 [licenses]
