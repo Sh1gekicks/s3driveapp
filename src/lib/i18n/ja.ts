@@ -401,6 +401,12 @@ export const ja = {
       `タグ ${key}=${value} が付いたバケットの合計です（同じタグのバケットが複数あれば合算します）。Billing でタグを有効化した日以降の分だけが集計されます。`,
     scopeAccountHint: (region: string) =>
       `このバケットだけでなく、${region} の S3 すべて（ほかのバケットを含む）の金額です。バケットに付けたタグは自動では使いません。バケット単位で表示するには、設定の「コスト」でこのバケットのコスト配分タグを指定します。`,
+    tagMissing: (key: string, value: string) =>
+      `設定のコスト配分タグ ${key}=${value} は、このバケットに付いていません。このタグでは、このバケットのコストは集計されません。設定の「コスト」で、バケットのタグから選び直してください。`,
+    tagZero: (key: string, value: string) =>
+      `タグ ${key}=${value} のコストが 0 です。Billing の「コスト配分タグ」でキー ${key} を有効化しているか確認してください。集計されるのは有効化した日以降の分だけで、反映には最大 24 時間かかります。`,
+    tagZeroUnchecked: (key: string, value: string) =>
+      `タグ ${key}=${value} のコストが 0 です。バケットにこのタグが付いているか、Billing の「コスト配分タグ」でキー ${key} を有効化しているかを確認してください。`,
     fetchedAt: (at: string) => `最終更新 ${at}`,
     notFetched: 'コスト情報はまだ取得していません',
     refreshFailed: 'コストを更新できませんでした。前回取得した結果を表示しています。',
@@ -453,9 +459,18 @@ export const ja = {
     costExplorerNote: '1 リクエストあたり $0.01 の料金がかかります',
     costTag: 'コスト配分タグ',
     costTagNote:
-      'バケットに付けて Billing で有効化したタグを、接続ごとに指定します。値をバケットごとに変えると、バケット単位のコストになります。',
+      'バケットに付いているタグから、コストの集計に使うものを接続ごとに選びます。集計されるのは、Billing の「コスト配分タグ」でキーを有効化したタグだけです。値をバケットごとに変えると、バケット単位のコストになります。',
     costTagKey: 'キー',
     costTagValue: '値',
+    costTagNone: '指定しない（アカウント全体の S3）',
+    costTagManual: '手入力…',
+    costTagNotOnBucket: (tag: string) => `${tag}（バケットにありません）`,
+    costTagMissing: (key: string, value: string) =>
+      `タグ ${key}=${value} はこのバケットに付いていません。このままでは、このバケットのコストは集計されません（0 と表示されます）。`,
+    costTagNoTags:
+      'このバケットにはタグがありません。S3 コンソールでタグ（例: キー Name、値 バケット名）を付けると、ここで選べます。',
+    costTagUnreadable: (reason: string) =>
+      `バケットのタグを読み取れないため、キーと値を入力してください（${reason}）`,
     searchIndex: '検索インデックス',
     indexSummary: (count: number, at: string) => `${n(count)} 件 · ${at}`,
     indexNone: '未作成',

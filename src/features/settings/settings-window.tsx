@@ -1,10 +1,10 @@
 // SCR-04 設定（別ウィンドウ、560×480）。変更は即時に反映して保存する（03 §7）。
 
 import { useQueries, useQueryClient } from '@tanstack/react-query';
-import { Database, FolderOpen, RefreshCw, Trash2 } from 'lucide-react';
+import { Database, FolderOpen, RefreshCw, Trash2, TriangleAlert } from 'lucide-react';
 import * as React from 'react';
 import { applyAppearance, useSharedEvents } from '@/app/app-events';
-import { useConnections, useSettings } from '@/app/queries';
+import { useBucketTags, useConnections, useSettings } from '@/app/queries';
 import { qk } from '@/app/query-keys';
 import { Icon } from '@/components/ds/icon';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ import type {
   Appearance,
   Connection,
   ConnectionPatch,
+  CostTag,
   SettingsPatch,
   StorageClass,
   UserSession,
@@ -329,21 +330,23 @@ function ConnectionsTab({ connections }: { connections: Connection[] }) {
   );
 }
 
-function CostTagRow({ connection }: { connection: Connection }) {
-  const patch = usePatchConnection();
+const sameTag = (a: CostTag | null, b: CostTag | null) =>
+  (a?.key ?? '') === (b?.key ?? '') && (a?.value ?? '') === (b?.value ?? '');
+
+/** コスト配分タグのキーと値の入力欄。バケットのタグを読み取れないときと、「手入力…」を選んだときに使う。 */
+function CostTagInputs({
+  connection,
+  onSave,
+}: Readonly<{ connection: Connection; onSave: (next: CostTag | null) => void }>) {
   const [key, setKey] = React.useState(connection.costTag?.key ?? '');
   const [value, setValue] = React.useState(connection.costTag?.value ?? '');
   const save = () => {
     const k = key.trim();
     const v = value.trim();
-    const next = k && v ? { key: k, value: v } : null;
-    const cur = connection.costTag;
-    if ((next?.key ?? '') === (cur?.key ?? '') && (next?.value ?? '') === (cur?.value ?? '')) return;
-    void patch(connection.id, { costTag: next }, 'コスト配分タグを変更');
+    onSave(k && v ? { key: k, value: v } : null);
   };
   return (
-    <div className="grid grid-cols-[1fr_1fr_1fr] items-center gap-2">
-      <span className="truncate text-base">{connection.bucket}</span>
+    <div className="grid grid-cols-2 gap-2">
       <Input
         size="sm"
         aria-label={`${connection.bucket} ${t.costTagKey}`}
@@ -360,6 +363,79 @@ function CostTagRow({ connection }: { connection: Connection }) {
         onChange={(e) => setValue(e.target.value)}
         onBlur={save}
       />
+    </div>
+  );
+}
+
+/**
+ * 接続のコスト配分タグ（04 §13.6）。バケットに付いているタグを候補として示し、そこから選ぶ。
+ * 読み取ったタグを自動では使わない（どのキーが Billing で有効化されているかは判別できないため）。
+ */
+function CostTagRow({ connection }: Readonly<{ connection: Connection }>) {
+  const patch = usePatchConnection();
+  const tags = useBucketTags(connection.id);
+  const [manual, setManual] = React.useState(false);
+  const cur = connection.costTag;
+  const save = (next: CostTag | null) => {
+    if (!sameTag(next, cur)) void patch(connection.id, { costTag: next }, 'コスト配分タグを変更');
+  };
+  // 値がバケット名のタグ（バケット単位のコストになる）を先頭にする
+  const candidates = [...(tags.data ?? [])].sort(
+    (a, b) => Number(b.value === connection.bucket) - Number(a.value === connection.bucket),
+  );
+  const index = candidates.findIndex((c) => sameTag(c, cur));
+  const missing = tags.isSuccess && cur != null && index < 0;
+  const selected = manual ? 'manual' : cur == null ? 'none' : index >= 0 ? `tag:${index}` : 'current';
+  const choose = (v: string) => {
+    setManual(v === 'manual');
+    if (v === 'none') save(null);
+    else if (v.startsWith('tag:')) save(candidates[Number(v.slice(4))] ?? null);
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="grid grid-cols-[1fr_2fr] items-center gap-2">
+        <span className="truncate text-base">{connection.bucket}</span>
+        {tags.isPending ? (
+          <Skeleton className="h-6" />
+        ) : tags.isError ? (
+          <CostTagInputs connection={connection} onSave={save} />
+        ) : (
+          <NativeSelect
+            size="sm"
+            aria-label={`${connection.bucket} ${t.costTag}`}
+            value={selected}
+            onChange={(e) => choose(e.target.value)}
+            options={[
+              { value: 'none', label: t.costTagNone },
+              ...candidates.map((c, i) => ({ value: `tag:${i}`, label: `${c.key}=${c.value}` })),
+              ...(missing
+                ? [{ value: 'current', label: t.costTagNotOnBucket(`${cur.key}=${cur.value}`) }]
+                : []),
+              { value: 'manual', label: t.costTagManual },
+            ]}
+          />
+        )}
+      </div>
+      {tags.isSuccess && manual ? (
+        <div className="grid grid-cols-[1fr_2fr] gap-2">
+          <span />
+          <CostTagInputs connection={connection} onSave={save} />
+        </div>
+      ) : null}
+      {missing ? (
+        <p role="alert" className="m-0 flex items-start gap-1 text-xs">
+          <Icon icon={TriangleAlert} size={12} className="mt-0.5 shrink-0 text-warning" />
+          <span className="min-w-0">{t.costTagMissing(cur.key, cur.value)}</span>
+        </p>
+      ) : null}
+      {tags.isSuccess && candidates.length === 0 && !cur ? (
+        <p className="m-0 text-xs text-muted-foreground">{t.costTagNoTags}</p>
+      ) : null}
+      {tags.isError ? (
+        <p className="m-0 text-xs text-muted-foreground">
+          {t.costTagUnreadable(ipc.toAppError(tags.error).message)}
+        </p>
+      ) : null}
     </div>
   );
 }

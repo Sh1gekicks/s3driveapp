@@ -34,7 +34,7 @@ impl UserSession {
     }
 }
 
-/// コスト配分タグ（04 §13.1）。
+/// コスト配分タグ（04 §13.1）。バケットに付いているタグ（候補）の一覧にも使う。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

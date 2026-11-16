@@ -7,6 +7,7 @@ export const qk = {
   connections: ['connections'] as const,
   credentials: ['credentials'] as const,
   bucket: (connId: string) => ['bucket', connId] as const,
+  bucketTags: (connId: string) => ['bucketTags', connId] as const,
   objects: (connId: string, prefix: string, opts?: ListOptions) =>
     opts ? (['objects', connId, prefix, opts] as const) : (['objects', connId, prefix] as const),
   objectsAll: (connId: string) => ['objects', connId] as const,
@@ -29,6 +30,8 @@ const MINUTE = 60_000;
 
 export const staleTime = {
   bucket: 10 * MINUTE,
+  /** S3 コンソールでタグを付け直して戻ったときに取り直せるよう、短くする */
+  bucketTags: MINUTE,
   objects: 30_000,
   object: 60_000,
   versions: 30_000,

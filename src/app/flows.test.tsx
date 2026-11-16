@@ -60,6 +60,16 @@ const TAGGED_COST: CostSummary = {
   fetchedAt: '2026-09-28T23:19:50Z',
 };
 
+/** タグ Name=acme-media-tokyo のコスト（タグの条件に何も一致せず、すべて 0）。 */
+const ZERO_TAGGED_COST: CostSummary = {
+  ...TAGGED_COST,
+  scope: { kind: 'tag', key: 'Name', value: 'acme-media-tokyo' },
+  monthToDate: 0,
+  breakdown: { storage: 0, requests: 0, transfer: 0, retrieval: 0, other: 0 },
+  daily: Array.from({ length: 30 }, (_, i) => (i < 28 ? 0 : null)),
+  forecastMonthEnd: 0,
+};
+
 describe('アップロード（04 §4）', () => {
   it('選んだファイルをアップロードすると一覧に表示され、完了を知らせる', async () => {
     renderWithMock();
@@ -346,6 +356,52 @@ describe('ストレージとコスト（SCR-03）', () => {
     expect(screen.getAllByText('$0.00029')).toHaveLength(3);
     expect(screen.getByText(/同じタグのバケットが複数あれば合算します/)).toBeInTheDocument();
     expect(screen.getByText(/^タグ Name=s3drive が付いた S3/)).toBeInTheDocument();
+    // 金額が出ていれば、タグの案内は出さない
+    expect(screen.queryByText(/のコストが 0 です/)).toBeNull();
+  });
+
+  it('設定のコスト配分タグがバケットに付いていなければ、集計されないことを示す（04 §13.6）', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderWithMock({
+      before: (b) => b.connectionPatches.set('conn-tokyo', { costTag: { key: 'Name', value: 's3drive' } }),
+    });
+    await within(await fileList()).findByText('logo.png');
+    act(() => handleCommand('go.dashboard'));
+    // 取得する前から示す（Cost Explorer に問い合わせても 0 になるため）
+    expect(
+      await screen.findByText(/設定のコスト配分タグ Name=s3drive は、このバケットに付いていません/),
+    ).toBeInTheDocument();
+    expect(backend.calls.some((c) => c.cmd === 'cost_refresh')).toBe(false);
+    const [fetch] = await screen.findAllByRole('button', { name: '取得' });
+    await user.click(fetch as HTMLElement);
+    expect(await screen.findByText('タグ Name=s3drive')).toBeInTheDocument();
+    expect(
+      screen.getByText(/設定のコスト配分タグ Name=s3drive は、このバケットに付いていません/),
+    ).toBeInTheDocument();
+  });
+
+  it('タグが付いているのにコストがすべて 0 なら、Billing での有効化を確かめるよう案内する（04 §13.6）', async () => {
+    renderWithMock({
+      before: (b) => {
+        b.connectionPatches.set('conn-tokyo', { costTag: { key: 'Name', value: 'acme-media-tokyo' } });
+        b.costs.set('conn-tokyo', ZERO_TAGGED_COST);
+      },
+    });
+    await within(await fileList()).findByText('logo.png');
+    act(() => handleCommand('go.dashboard'));
+    expect(
+      await screen.findByText(
+        /タグ Name=acme-media-tokyo のコストが 0 です。Billing の「コスト配分タグ」でキー Name を有効化しているか確認してください/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('タグを使わない接続では、バケットのタグを読み取らない', async () => {
+    const { backend } = renderWithMock();
+    await within(await fileList()).findByText('logo.png');
+    act(() => handleCommand('go.dashboard'));
+    await screen.findAllByRole('button', { name: '取得' });
+    expect(backend.calls.some((c) => c.cmd === 'connection_bucket_tags')).toBe(false);
   });
 
   it('「更新」に失敗したら、前回の結果を表示したままカード内に理由を示す（03 §6）', async () => {

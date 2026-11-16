@@ -35,6 +35,7 @@ macro_rules! app_commands {
             $crate::commands::connections::connection_patch,
             $crate::commands::connections::connection_delete,
             $crate::commands::connections::connection_reorder,
+            $crate::commands::connections::connection_bucket_tags,
             $crate::commands::connections::connection_last_location,
             $crate::commands::connections::connection_set_location,
             $crate::commands::connections::credential_list,

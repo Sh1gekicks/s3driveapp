@@ -23,6 +23,7 @@
     "allow-connection-patch",
     "allow-connection-delete",
     "allow-connection-reorder",
+    "allow-connection-bucket-tags",
     "allow-connection-last-location",
     "allow-connection-set-location",
     "allow-credential-list",

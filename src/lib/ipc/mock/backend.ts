@@ -423,6 +423,7 @@ export class MockBackend {
           versioning: 'enabled',
           encryption: 'SSE-S3 (AES-256)',
           objectCount: 0,
+          tags: [],
           usageGb: {},
           cost: { requests: 0, transfer: 0, retrieval: 0, prevMonth: 0, dailyBase: 0 },
         };
@@ -450,6 +451,8 @@ export class MockBackend {
         return null;
       case 'connection_reorder':
         return null;
+      case 'connection_bucket_tags':
+        return this.bucket(a.id).tags;
       case 'connection_last_location':
         return this.lastLocation;
       case 'connection_set_location':
@@ -1019,25 +1022,34 @@ export class MockBackend {
         if (!this.settings.cost.useCostExplorer)
           fail('COST_UNAVAILABLE', 'Cost Explorer は設定で無効になっています');
         const b = this.bucket(a.connectionId);
-        const storage = Object.entries(b.usageGb).reduce(
-          (s, [k, gb]) => s + (gb ?? 0) * (PRICE[k as StorageClass] ?? 0),
-          0,
-        );
-        const mtd = storage + b.cost.requests + b.cost.transfer + b.cost.retrieval;
+        // 接続のコスト配分タグがバケットに付いていなければ、Cost Explorer と同じくすべて 0 を返す
+        const tag = this.connection(b).costTag;
+        const k = !tag || b.tags.some((x) => x.key === tag.key && x.value === tag.value) ? 1 : 0;
+        const storage =
+          k *
+          Object.entries(b.usageGb).reduce(
+            (s, [cls, gb]) => s + (gb ?? 0) * (PRICE[cls as StorageClass] ?? 0),
+            0,
+          );
+        const mtd = storage + k * (b.cost.requests + b.cost.transfer + b.cost.retrieval);
         const day = NOW.getDate();
         const daily = Array.from({ length: 30 }, (_, i) =>
-          i < day ? Number((b.cost.dailyBase * (0.8 + 0.4 * Math.abs(Math.sin(i * 1.7)))).toFixed(3)) : null,
+          i < day
+            ? Number((k * b.cost.dailyBase * (0.8 + 0.4 * Math.abs(Math.sin(i * 1.7)))).toFixed(3))
+            : null,
         );
         const summary: CostSummary = {
-          scope: { kind: 'accountRegion', region: b.region },
+          scope: tag
+            ? { kind: 'tag', key: tag.key, value: tag.value }
+            : { kind: 'accountRegion', region: b.region },
           month: `${NOW.getFullYear()}-${String(NOW.getMonth() + 1).padStart(2, '0')}`,
           monthToDate: mtd,
-          prevMonthSamePeriod: b.cost.prevMonth,
+          prevMonthSamePeriod: k * b.cost.prevMonth,
           breakdown: {
             storage,
-            requests: b.cost.requests,
-            transfer: b.cost.transfer,
-            retrieval: b.cost.retrieval,
+            requests: k * b.cost.requests,
+            transfer: k * b.cost.transfer,
+            retrieval: k * b.cost.retrieval,
             other: 0,
           },
           daily,

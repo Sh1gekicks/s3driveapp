@@ -252,6 +252,7 @@ interface AppError { code: ErrorCode; message: string; detail?: string; retryabl
 | `connection_patch` | `id`、`patch: { costTag?, defaultStorageClass?, useSourceIdentity? }` | `Connection` | 接続ごとの設定（コスト配分タグなど。確認は不要） |
 | `connection_delete` | `id` | — | 接続と関連データを削除する |
 | `connection_reorder` | `ids: ConnectionId[]` | — | サイドバーの順序 |
+| `connection_bucket_tags` | `id` | `CostTag[]` | バケットに付いているタグ（キーの順。タグがなければ空）。コスト配分タグの候補と照合に使う（[04 §13.6](04-features.md#136-コスト配分タグの候補と照合)）。設定ウィンドウからも呼ぶ |
 | `connection_last_location` | — | `{ connectionId, prefix } \| null` | 前回表示していた場所（起動時に復元する。03 §2） |
 | `connection_set_location` | `location` | — | 表示中の場所を保存する |
 | `credential_list` | — | `{ id, accessKeyIdMasked, usedBy: string[] }[]` | DLG-05 の既存の認証情報 |

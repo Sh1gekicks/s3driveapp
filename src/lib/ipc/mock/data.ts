@@ -27,6 +27,8 @@ export interface MockBucket {
   versioning: Versioning;
   encryption: string;
   objectCount: number;
+  /** バケットに付いているタグ（キーの順）。 */
+  tags: { key: string; value: string }[];
   usageGb: Partial<Record<StorageClass, number>>;
   cost: { requests: number; transfer: number; retrieval: number; prevMonth: number; dailyBase: number };
 }
@@ -155,6 +157,10 @@ export function seed(): { buckets: MockBucket[]; objects: Map<string, Map<string
       region: 'ap-northeast-1',
       versioning: 'enabled',
       encryption: 'SSE-S3 (AES-256)',
+      tags: [
+        { key: 'Name', value: 'acme-media-tokyo' },
+        { key: 'app', value: 's3drive' },
+      ],
       objectCount: 12408,
       usageGb: {
         STANDARD: 180.4,
@@ -172,6 +178,7 @@ export function seed(): { buckets: MockBucket[]; objects: Map<string, Map<string
       region: 'ap-northeast-3',
       versioning: 'disabled',
       encryption: 'SSE-S3 (AES-256)',
+      tags: [{ key: 'Name', value: 'acme-backup-osaka' }],
       objectCount: 38,
       usageGb: { STANDARD: 0.4, DEEP_ARCHIVE: 84.0 },
       cost: { requests: 0.01, transfer: 0, retrieval: 0, prevMonth: 0.18, dailyBase: 0.0068 },

@@ -13,6 +13,7 @@ import type {
   ConnectionPatch,
   ConnectionTestResult,
   CostSummary,
+  CostTag,
   CredentialSummary,
   Decisions,
   DownloadDestination,
@@ -119,6 +120,8 @@ export const connections = {
   patch: (id: string, patch: ConnectionPatch) => call<Connection>('connection_patch', { id, patch }),
   remove: (id: string) => call<void>('connection_delete', { id }),
   reorder: (ids: string[]) => call<void>('connection_reorder', { ids }),
+  /** バケットに付いているタグ（コスト配分タグの候補と照合に使う。04 §13.6）。 */
+  bucketTags: (id: string) => call<CostTag[]>('connection_bucket_tags', { id }),
   lastLocation: () => call<Location | null>('connection_last_location'),
   setLocation: (location: Location) => call<void>('connection_set_location', { location }),
   credentials: () => call<CredentialSummary[]>('credential_list'),

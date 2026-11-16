@@ -106,7 +106,8 @@ AssumeRole を使う場合はロールに、使わない場合は IAM ユーザ�
         "s3:ListBucket",
         "s3:ListBucketVersions",
         "s3:GetBucketVersioning",
-        "s3:GetEncryptionConfiguration"
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketTagging"
       ],
       "Resource": "arn:aws:s3:::BUCKET_NAME"
     },
@@ -153,6 +154,7 @@ AssumeRole を使う場合はロールに、使わない場合は IAM ユーザ�
 | `s3:ListBucketVersions` | バージョンタブと削除済みの項目を表示できない |
 | `s3:RestoreObject` | アーカイブを取り出せない |
 | `s3:GetObjectTagging`／`s3:PutObjectTagging` | タグ付きオブジェクトの移動・クラス変更が失敗する |
+| `s3:GetBucketTagging` | 設定のコスト配分タグをバケットのタグから選べず、キーと値の手入力になる。指定したタグがバケットに付いているかも確かめられない（[04 §13.6](04-features.md#136-コスト配分タグの候補と照合)） |
 | `cloudwatch:GetMetricData` | 利用容量を検索インデックスから集計する |
 | `ce:*` | コストのカードに権限がない旨を表示する |
 | `pricing:GetProducts` | 同梱の単価表を使う |
