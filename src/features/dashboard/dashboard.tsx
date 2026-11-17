@@ -469,10 +469,11 @@ export function Dashboard({ connection }: { connection: Connection }) {
               </div>
             ) : null}
             {tagNotice && ceEnabled ? (
-              <div role="status" className="mb-2 flex items-start gap-1.5 text-sm">
+              // 状態の通知（role="status" と同じ意味を持つ要素）
+              <output className="mb-2 flex items-start gap-1.5 text-sm">
                 <Icon icon={TriangleAlert} size={14} className="mt-0.5 shrink-0 text-warning" />
                 <span className="min-w-0 break-words">{tagNotice}</span>
-              </div>
+              </output>
             ) : null}
             {c ? (
               <div className="flex flex-col text-base">
