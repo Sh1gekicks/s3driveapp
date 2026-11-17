@@ -4,6 +4,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MockBackend } from '@/lib/ipc/mock/backend';
 import { useUiStore } from '@/stores/ui';
 import { fileList, findToast, renderWithMock, resetScreen } from '@/test/harness';
 import { SettingsWindow } from './settings-window';
@@ -20,8 +21,14 @@ beforeEach(resetScreen);
 const KEY_ID = `AKIA${'TESTFAKEKEY00000'}`;
 const SECRET = 'test-secret-access-key-for-s3drive-00000';
 
-function renderSettings() {
-  return renderWithMock({}, <SettingsWindow />);
+function renderSettings(before?: (b: MockBackend) => void) {
+  return renderWithMock({ before }, <SettingsWindow />);
+}
+
+/** `connection_patch` で最後に送ったコスト配分タグ。 */
+function lastCostTag(backend: MockBackend) {
+  const patches = backend.calls.filter((c) => c.cmd === 'connection_patch');
+  return (patches.at(-1)?.args.patch as { costTag?: unknown } | undefined)?.costTag;
 }
 
 async function tab(user: ReturnType<typeof userEvent.setup>, name: string) {
@@ -110,16 +117,82 @@ describe('SCR-04 設定', () => {
     await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'connection_delete')).toBe(true));
   });
 
-  it('コスト: Cost Explorer の利用とコスト配分タグ', async () => {
+  it('コスト: Cost Explorer の利用と、バケットのタグから選ぶコスト配分タグ', async () => {
     const user = userEvent.setup();
     const { backend } = renderSettings();
     await tab(user, 'コスト');
     await user.click(await screen.findByRole('switch', { name: /Cost Explorer を使う/ }));
     await waitFor(() => expect(backend.settings.cost.useCostExplorer).toBe(false));
-    await user.type(screen.getByLabelText('acme-media-tokyo キー'), 'project');
-    await user.type(screen.getByLabelText('acme-media-tokyo 値'), 's3drive');
+    // バケットに付いているタグが候補になる。値がバケット名のタグを先頭に示す（04 §13.6）
+    const select = await screen.findByLabelText('acme-media-tokyo コスト配分タグ');
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((o) => o.textContent),
+    ).toEqual(['指定しない（アカウント全体の S3）', 'Name=acme-media-tokyo', 'app=s3drive', '手入力…']);
+    expect(select).toHaveValue('none');
+    await user.selectOptions(select, 'Name=acme-media-tokyo');
+    await waitFor(() => expect(lastCostTag(backend)).toEqual({ key: 'Name', value: 'acme-media-tokyo' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('acme-media-tokyo コスト配分タグ')).toHaveDisplayValue(
+        'Name=acme-media-tokyo',
+      ),
+    );
+    await user.selectOptions(
+      screen.getByLabelText('acme-media-tokyo コスト配分タグ'),
+      '指定しない（アカウント全体の S3）',
+    );
+    await waitFor(() => expect(lastCostTag(backend)).toBeNull());
+  });
+
+  it('コスト: 設定のタグがバケットに付いていなければ知らせ、候補から選び直せる', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderSettings((b) =>
+      b.connectionPatches.set('conn-tokyo', { costTag: { key: 'Name', value: 's3drive' } }),
+    );
+    await tab(user, 'コスト');
+    const select = await screen.findByLabelText('acme-media-tokyo コスト配分タグ');
+    expect(select).toHaveDisplayValue('Name=s3drive（バケットにありません）');
+    expect(screen.getByRole('alert')).toHaveTextContent('タグ Name=s3drive はこのバケットに付いていません');
+    await user.selectOptions(select, 'Name=acme-media-tokyo');
+    await waitFor(() => expect(lastCostTag(backend)).toEqual({ key: 'Name', value: 'acme-media-tokyo' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('コスト: これから付けるタグは手入力で指定できる', async () => {
+    const user = userEvent.setup();
+    const { backend } = renderSettings();
+    await tab(user, 'コスト');
+    await user.selectOptions(await screen.findByLabelText('acme-backup-osaka コスト配分タグ'), '手入力…');
+    await user.type(screen.getByLabelText('acme-backup-osaka キー'), 'project');
+    await user.type(screen.getByLabelText('acme-backup-osaka 値'), 'archive');
     await user.tab();
-    await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'connection_patch')).toBe(true));
+    await waitFor(() => expect(lastCostTag(backend)).toEqual({ key: 'project', value: 'archive' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'タグ project=archive はこのバケットに付いていません',
+    );
+  });
+
+  it('コスト: バケットのタグを読み取れなければ、理由を示して手入力にする', async () => {
+    const user = userEvent.setup();
+    // 最初の接続（acme-media-tokyo）のタグの読み取りだけを失敗させる
+    const { backend } = renderSettings((b) =>
+      b.failNext(
+        'connection_bucket_tags',
+        'ACCESS_DENIED',
+        'この操作を行う権限がありません（s3:GetBucketTagging）',
+      ),
+    );
+    await tab(user, 'コスト');
+    expect(
+      await screen.findByText(/バケットのタグを読み取れないため、キーと値を入力してください/),
+    ).toHaveTextContent('s3:GetBucketTagging');
+    expect(screen.queryByLabelText('acme-media-tokyo コスト配分タグ')).toBeNull();
+    expect(await screen.findByLabelText('acme-backup-osaka コスト配分タグ')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('acme-media-tokyo キー'), 'Name');
+    await user.type(screen.getByLabelText('acme-media-tokyo 値'), 'acme-media-tokyo');
+    await user.tab();
+    await waitFor(() => expect(lastCostTag(backend)).toEqual({ key: 'Name', value: 'acme-media-tokyo' }));
   });
 
   it('詳細: インデックスの再構築・キャッシュの削除・アップデートの確認', async () => {

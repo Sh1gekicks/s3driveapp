@@ -67,6 +67,20 @@ export function useBucketInfo(connId: string | null) {
   });
 }
 
+/**
+ * バケットに付いているタグ。コスト配分タグの候補（設定）と、接続のタグがバケットに付いているかの確認
+ * （ダッシュボード）に使う（04 §13.6）。読み取れない場合（権限がないなど）はエラーのままにし、呼び出し側で
+ * 手入力に切り替える。
+ */
+export function useBucketTags(connId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: qk.bucketTags(connId ?? ''),
+    queryFn: () => ipc.connections.bucketTags(connId as string),
+    staleTime: staleTime.bucketTags,
+    enabled: enabled && Boolean(connId),
+  });
+}
+
 /** フォルダの一覧。1 ページ目を受け取った時点で描画し、残りのページは順に取得して追加する（04 §3.1）。 */
 export function useListing(connId: string | null, prefix: string, opts: ListOptions, enabled = true) {
   const query = useInfiniteQuery({

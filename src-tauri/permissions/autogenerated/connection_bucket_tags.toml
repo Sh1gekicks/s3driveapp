@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connection-bucket-tags"
+description = "Enables the connection_bucket_tags command without any pre-configured scope."
+commands.allow = ["connection_bucket_tags"]
+
+[[permission]]
+identifier = "deny-connection-bucket-tags"
+description = "Denies the connection_bucket_tags command without any pre-configured scope."
+commands.deny = ["connection_bucket_tags"]

@@ -16,8 +16,8 @@ use crate::credentials::{
 use crate::error::{CoreError, CoreResult, ErrorCode};
 use crate::model::{
     Account, BucketInfo, Connection, ConnectionId, ConnectionInput, ConnectionPatch,
-    ConnectionRecord, ConnectionTestResult, CredentialInput, CredentialRecord, CredentialSummary,
-    Location, UserSession, Versioning,
+    ConnectionRecord, ConnectionTestResult, CostTag, CredentialInput, CredentialRecord,
+    CredentialSummary, Location, UserSession, Versioning,
 };
 use crate::store::secrets::aws_account;
 use crate::util::{key, region, time};
@@ -196,6 +196,28 @@ async fn fetch_encryption(s3: &aws_sdk_s3::Client, bucket: &str) -> String {
             .map(|d| encryption_label(d.sse_algorithm().as_str(), d.kms_master_key_id()))
             .unwrap_or_else(|| "なし".to_string()),
         Err(_) => "不明".to_string(),
+    }
+}
+
+/// バケットに付いているタグ（`GetBucketTagging`）。キーの順に返す。
+///
+/// タグが 1 つもないバケットは `NoSuchTagSet`（404）を返すため、空として扱う。
+async fn fetch_bucket_tags(s3: &aws_sdk_s3::Client, bucket: &str) -> CoreResult<Vec<CostTag>> {
+    match s3.get_bucket_tagging().bucket(bucket).send().await {
+        Ok(out) => {
+            let mut tags: Vec<CostTag> = out
+                .tag_set()
+                .iter()
+                .map(|t| CostTag {
+                    key: t.key().to_string(),
+                    value: t.value().to_string(),
+                })
+                .collect();
+            tags.sort_by(|a, b| a.key.cmp(&b.key));
+            Ok(tags)
+        }
+        Err(e) if error_map::parts_of(&e).code.as_deref() == Some("NoSuchTagSet") => Ok(Vec::new()),
+        Err(e) => Err(error_map::classify(&e, Ctx::Op("s3:GetBucketTagging"))),
     }
 }
 
@@ -820,6 +842,14 @@ impl ConnectionService<'_> {
         Ok(info)
     }
 
+    /// バケットに付いているタグ。設定ウィンドウでコスト配分タグの候補として示し、ダッシュボードで接続の
+    /// コスト配分タグがバケットに付いているかを確かめるために使う（04 §13.6）。
+    /// どのタグを使うかはユーザーが決める（読み取ったタグを自動では使わない）。
+    pub async fn bucket_tags(&self, connection_id: &str) -> CoreResult<Vec<CostTag>> {
+        let ctx = self.core.ctx(connection_id).await?;
+        fetch_bucket_tags(&ctx.clients.s3, &ctx.bucket).await
+    }
+
     /// 接続のリージョンを修正し、そのリージョンでクライアントを作り直させる。
     fn set_region(&self, connection_id: &str, region: &str) -> CoreResult<()> {
         self.update_account(|account| {
@@ -958,6 +988,73 @@ mod tests {
             "ap-northeast-3"
         );
         assert!(core.0.clients.lock().unwrap().get("k1").is_none());
+    }
+
+    fn xml(status: u16, body: &'static str) -> HttpResponse {
+        HttpResponse::new(StatusCode::try_from(status).unwrap(), SdkBody::from(body))
+    }
+
+    async fn tags(response: fn() -> HttpResponse) -> CoreResult<Vec<CostTag>> {
+        let rule = mock!(aws_sdk_s3::Client::get_bucket_tagging).then_http_response(response);
+        let s3 = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&rule]);
+        fetch_bucket_tags(&s3, "b").await
+    }
+
+    #[tokio::test]
+    async fn reads_bucket_tags_sorted_by_key() {
+        let got = tags(|| {
+            xml(
+                200,
+                "<Tagging><TagSet>\
+                 <Tag><Key>app</Key><Value>s3drive</Value></Tag>\
+                 <Tag><Key>Name</Key><Value>acme-media-tokyo</Value></Tag>\
+                 </TagSet></Tagging>",
+            )
+        })
+        .await
+        .unwrap();
+        let pairs: Vec<(&str, &str)> = got
+            .iter()
+            .map(|t| (t.key.as_str(), t.value.as_str()))
+            .collect();
+        assert_eq!(pairs, [("Name", "acme-media-tokyo"), ("app", "s3drive")]);
+    }
+
+    #[tokio::test]
+    async fn treats_a_bucket_without_tags_as_empty() {
+        let got = tags(|| {
+            xml(
+                404,
+                "<Error><Code>NoSuchTagSet</Code><Message>The TagSet does not exist</Message></Error>",
+            )
+        })
+        .await
+        .unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reports_the_missing_permission_for_bucket_tags() {
+        let err = tags(|| {
+            xml(
+                403,
+                "<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>",
+            )
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::AccessDenied);
+        assert!(err.message.contains("s3:GetBucketTagging"));
+        // バケットがなくなっている場合
+        let err = tags(|| {
+            xml(
+                404,
+                "<Error><Code>NoSuchBucket</Code><Message>gone</Message></Error>",
+            )
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::BucketNotFound);
     }
 
     #[test]

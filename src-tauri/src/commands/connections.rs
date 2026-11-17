@@ -1,7 +1,7 @@
 //! 接続・認証情報（05 §3.2）。
 
 use s3drive_core::model::{
-    BucketInfo, Connection, ConnectionInput, ConnectionPatch, ConnectionTestResult,
+    BucketInfo, Connection, ConnectionInput, ConnectionPatch, ConnectionTestResult, CostTag,
     CredentialSummary, Location,
 };
 use tauri::{AppHandle, State};
@@ -78,6 +78,16 @@ pub fn connection_reorder(
     ipc(state.core.connections().reorder(&ids))?;
     emit_all(&app, CONNECTIONS_CHANGED, ());
     Ok(())
+}
+
+/// バケットに付いているタグ（コスト配分タグの候補と照合に使う。04 §13.6）。
+/// 設定ウィンドウからも呼ぶため、名前を `connection_` で始める（05 §8）。
+#[tauri::command]
+pub async fn connection_bucket_tags(
+    state: State<'_, AppState>,
+    id: String,
+) -> CmdResult<Vec<CostTag>> {
+    ipc(state.core.connections().bucket_tags(&id).await)
 }
 
 /// 前回表示していた場所（起動時に復元する。03 §2）。
