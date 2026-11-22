@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-22
+
 ### 追加
 
 - 設定の「コスト配分タグ」を、バケットに付いているタグから選べるようにしました（キーと値の入力の食い違いで、コストがすべて $0.000 になることを防ぎます）。これから付けるタグは「手入力…」で指定できます
@@ -127,7 +129,8 @@
 
 - Apple の公証を行っていないため、初回起動時に macOS に止められます。「システム設定」→「プライバシーとセキュリティ」で「このまま開く」を押してください（[08 §6.1](docs/design/08-cicd.md#61-利用者のインストール手順リリースノートに記載する)）。
 
-[Unreleased]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Sh1gekicks/s3driveapp/compare/v0.2.0...v0.3.0
