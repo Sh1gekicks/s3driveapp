@@ -32,6 +32,12 @@ ignore = [
   # （2026-11 時点の最新: aws-smithy-http 0.64.1、aws-smithy-runtime 1.15.0、aws-smithy-types 1.8.1）。
   # AWS SDK が core::pin::pin! などに移ったら更新し、この例外を外す
   { id = "RUSTSEC-2026-0441", reason = "保守の終了の通知で脆弱性ではない。AWS SDK（aws-smithy-*）経由の依存のため、SDK が使わなくなるのを待つ" },
+  # chrono の保守の終了（2026-11 に公開された通知。代わりに jiff・time が推奨されている）。脆弱性の報告ではない。
+  # このアプリも日時の処理に直接使っているが、openidconnect（ID トークンの検証の時刻）・oauth2 と、
+  # AWS SDK の aws-smithy-http-client（aws-smithy-protocol-test → cbor-diag）が必須の依存にしているため、
+  # このアプリのコードを移しても依存から外せない（2026-11 時点の最新: openidconnect 4.1.0、oauth2 5.0.0、cbor-diag 0.1.12）。
+  # これらが chrono を使わなくなったら、このアプリのコードも jiff か time に移し、この例外を外す
+  { id = "RUSTSEC-2026-0543", reason = "保守の終了の通知で脆弱性ではない。openidconnect・oauth2・AWS SDK が必須の依存にしているため、移行先を使う版の公開を待つ" },
 ]
 
 [licenses]
